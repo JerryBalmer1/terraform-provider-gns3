@@ -1,0 +1,11 @@
+{
+  "_header": "recorded from GNS3 2.2.61 on 2026-10-07",
+  "_source": "https://gns3-server.readthedocs.io/en/stable/api/v2/controller/link/projectsprojectidlinkslinkid.html",
+  "request": {
+    "method": "DELETE",
+    "path": "/v2/projects/1af687e8-af70-40b8-87a9-ee9625c9360b/links/3013a84e-8c9a-48e1-841c-a6448ec3c1ca"
+  },
+  "response": {
+    "status": 204
+  }
+}

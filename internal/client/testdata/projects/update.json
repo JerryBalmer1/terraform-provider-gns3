@@ -1,0 +1,35 @@
+{
+  "_header": "recorded from GNS3 2.2.61 on 2026-10-07",
+  "_source": "https://gns3-server.readthedocs.io/en/stable/api/v2/controller/project/projectsprojectid.html",
+  "request": {
+    "method": "PUT",
+    "path": "/v2/projects/1af687e8-af70-40b8-87a9-ee9625c9360b",
+    "body": {
+      "name": "test2"
+    }
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "auto_close": true,
+      "auto_open": false,
+      "auto_start": false,
+      "drawing_grid_size": 25,
+      "filename": "test.gns3",
+      "grid_size": 75,
+      "name": "test2",
+      "path": "C:\\Users\\jlbal\\AppData\\Local\\Temp\\gns3\\data\\projects\\1af687e8-af70-40b8-87a9-ee9625c9360b",
+      "project_id": "1af687e8-af70-40b8-87a9-ee9625c9360b",
+      "scene_height": 1000,
+      "scene_width": 2000,
+      "show_grid": false,
+      "show_interface_labels": false,
+      "show_layers": false,
+      "snap_to_grid": false,
+      "status": "opened",
+      "supplier": null,
+      "variables": null,
+      "zoom": 100
+    }
+  }
+}

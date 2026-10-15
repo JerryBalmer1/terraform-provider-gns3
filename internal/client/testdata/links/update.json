@@ -1,0 +1,61 @@
+{
+  "_header": "recorded from GNS3 2.2.61 on 2026-10-07",
+  "_source": "https://gns3-server.readthedocs.io/en/stable/api/v2/controller/link/projectsprojectidlinkslinkid.html",
+  "request": {
+    "method": "PUT",
+    "path": "/v2/projects/1af687e8-af70-40b8-87a9-ee9625c9360b/links/3013a84e-8c9a-48e1-841c-a6448ec3c1ca",
+    "body": {
+      "suspend": true,
+      "filters": {
+        "frequency_drop": [
+          50
+        ],
+        "latency": [
+          10
+        ]
+      }
+    }
+  },
+  "response": {
+    "status": 201,
+    "body": {
+      "capture_compute_id": null,
+      "capture_file_name": null,
+      "capture_file_path": null,
+      "capturing": false,
+      "filters": {
+        "frequency_drop": [
+          50
+        ],
+        "latency": [
+          10
+        ]
+      },
+      "link_id": "3013a84e-8c9a-48e1-841c-a6448ec3c1ca",
+      "link_style": {},
+      "link_type": "ethernet",
+      "nodes": [
+        {
+          "adapter_number": 0,
+          "label": {
+            "style": "font-family: TypeWriter;font-size: 10.0;font-weight: bold;fill: #000000;fill-opacity: 1.0;",
+            "text": "0/0"
+          },
+          "node_id": "0000895b-c1fc-49a7-90b6-60b6e998c3d0",
+          "port_number": 0
+        },
+        {
+          "adapter_number": 0,
+          "label": {
+            "style": "font-family: TypeWriter;font-size: 10.0;font-weight: bold;fill: #000000;fill-opacity: 1.0;",
+            "text": "0/0"
+          },
+          "node_id": "115dbaac-1970-489a-a720-7e5085118c2d",
+          "port_number": 0
+        }
+      ],
+      "project_id": "1af687e8-af70-40b8-87a9-ee9625c9360b",
+      "suspend": true
+    }
+  }
+}

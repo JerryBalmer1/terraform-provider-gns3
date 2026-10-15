@@ -1,0 +1,41 @@
+{
+  "_header": "recorded from GNS3 2.2.61 on 2026-10-07",
+  "_source": "https://gns3-server.readthedocs.io/en/stable/api/v2/controller/compute/sid.html",
+  "request": {
+    "method": "GET",
+    "path": "/v2/computes/local"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "capabilities": {
+        "node_types": [
+          "cloud",
+          "ethernet_hub",
+          "ethernet_switch",
+          "nat",
+          "vpcs",
+          "virtualbox",
+          "dynamips",
+          "frame_relay_switch",
+          "atm_switch",
+          "qemu",
+          "vmware",
+          "traceng"
+        ],
+        "platform": "win32",
+        "version": "2.2.61"
+      },
+      "compute_id": "local",
+      "connected": true,
+      "cpu_usage_percent": 53.5,
+      "host": "127.0.0.1",
+      "last_error": null,
+      "memory_usage_percent": 98.7,
+      "name": "MSI",
+      "port": 3080,
+      "protocol": "http",
+      "user": null
+    }
+  }
+}

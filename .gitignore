@@ -1,0 +1,20 @@
+# Build output
+/terraform-provider-gns3
+/terraform-provider-gns3.exe
+/dist/
+*.test
+
+# Terraform working files (examples, manual checks)
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+crash.log
+*.tfvars
+
+# Editors
+.idea/
+.vscode/
+
+# Acceptance test logs (Invoke-Build TestAcc)
+acc-run-*.log

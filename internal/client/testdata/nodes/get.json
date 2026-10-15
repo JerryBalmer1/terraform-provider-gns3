@@ -1,0 +1,59 @@
+{
+  "_header": "recorded from GNS3 2.2.61 on 2026-10-07",
+  "_source": "https://gns3-server.readthedocs.io/en/stable/api/v2/controller/node/projectsprojectidnodesnodeid.html",
+  "request": {
+    "method": "GET",
+    "path": "/v2/projects/1af687e8-af70-40b8-87a9-ee9625c9360b/nodes/0000895b-c1fc-49a7-90b6-60b6e998c3d0"
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "command_line": "",
+      "compute_id": "local",
+      "console": 5000,
+      "console_auto_start": false,
+      "console_host": "127.0.0.1",
+      "console_type": "telnet",
+      "custom_adapters": [],
+      "first_port_name": null,
+      "height": 59,
+      "label": {
+        "rotation": 0,
+        "style": null,
+        "text": "test",
+        "x": null,
+        "y": -40
+      },
+      "locked": false,
+      "name": "test",
+      "node_directory": "C:\\Users\\jlbal\\AppData\\Local\\Temp\\gns3\\data\\projects\\1af687e8-af70-40b8-87a9-ee9625c9360b\\project-files\\vpcs\\0000895b-c1fc-49a7-90b6-60b6e998c3d0",
+      "node_id": "0000895b-c1fc-49a7-90b6-60b6e998c3d0",
+      "node_type": "vpcs",
+      "port_name_format": "Ethernet{0}",
+      "port_segment_size": 0,
+      "ports": [
+        {
+          "adapter_number": 0,
+          "data_link_types": {
+            "Ethernet": "DLT_EN10MB"
+          },
+          "link_type": "ethernet",
+          "name": "Ethernet0",
+          "port_number": 0,
+          "short_name": "e0"
+        }
+      ],
+      "project_id": "1af687e8-af70-40b8-87a9-ee9625c9360b",
+      "properties": {
+        "startup_script": "echo test"
+      },
+      "status": "stopped",
+      "symbol": ":/symbols/computer.svg",
+      "template_id": null,
+      "width": 65,
+      "x": 0,
+      "y": 0,
+      "z": 1
+    }
+  }
+}

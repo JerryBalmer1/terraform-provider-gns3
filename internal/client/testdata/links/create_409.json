@@ -1,0 +1,30 @@
+{
+  "_header": "recorded from GNS3 2.2.61 on 2026-10-07",
+  "_source": "https://gns3-server.readthedocs.io/en/stable/api/v2/controller/link/projectsprojectidlinks.html",
+  "_notes": "Recorded against a built-in Ethernet switch (SW1) created for the recording, as in the docs sample.",
+  "request": {
+    "method": "POST",
+    "path": "/v2/projects/1af687e8-af70-40b8-87a9-ee9625c9360b/links",
+    "body": {
+      "nodes": [
+        {
+          "node_id": "526c2a0d-1a9e-463b-bb69-d48083d42db2",
+          "port_number": 3,
+          "adapter_number": 0
+        },
+        {
+          "node_id": "526c2a0d-1a9e-463b-bb69-d48083d42db2",
+          "port_number": 4,
+          "adapter_number": 0
+        }
+      ]
+    }
+  },
+  "response": {
+    "status": 409,
+    "body": {
+      "message": "Cannot connect to itself",
+      "status": 409
+    }
+  }
+}

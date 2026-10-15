@@ -1,0 +1,14 @@
+{
+  "_header": "recorded from GNS3 2.2.61 on 2026-10-07",
+  "_source": "https://gns3-server.readthedocs.io/en/stable/api/v2/controller/node/projectsprojectidnodesnodeidfilespath.html",
+  "_notes": "Docs list 204 \"Instance reloaded\"; 2.2.61 answers 201 with an empty body.",
+  "request": {
+    "method": "POST",
+    "path": "/v2/projects/1af687e8-af70-40b8-87a9-ee9625c9360b/nodes/115dbaac-1970-489a-a720-7e5085118c2d/files/startup.vpc",
+    "text": "set pcname PC1"
+  },
+  "response": {
+    "status": 201,
+    "text": ""
+  }
+}

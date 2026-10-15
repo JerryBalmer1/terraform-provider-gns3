@@ -1,0 +1,15 @@
+{
+  "_header": "recorded from GNS3 2.2.61 on 2026-10-07",
+  "_source": "https://gns3-server.readthedocs.io/en/stable/api/v2/controller/project/projectsprojectid.html",
+  "request": {
+    "method": "GET",
+    "path": "/v2/projects/ffffffff-0000-0000-0000-000000000000"
+  },
+  "response": {
+    "status": 404,
+    "body": {
+      "message": "Project ID ffffffff-0000-0000-0000-000000000000 doesn't exist",
+      "status": 404
+    }
+  }
+}

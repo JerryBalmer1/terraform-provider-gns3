@@ -1,0 +1,3 @@
+# Keep LF everywhere so gofmt and tfplugindocs output stay byte-identical on Windows checkouts.
+* text=auto eol=lf
+*.exe binary
