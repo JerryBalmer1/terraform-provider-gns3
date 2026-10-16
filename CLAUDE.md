@@ -38,7 +38,9 @@ examples/                     provider/provider.tf, resources/<type>/resource.tf
                               data-sources/<type>/data-source.tf; feed docs and TestExamples
 tools/tools.go                pins tfplugindocs (build tag tools)
 .github/workflows/            ci.yml (push to main, PRs: build, vet, gofmt, staticcheck, unit tests,
-                              docs drift; no TF_ACC), release.yml (v* tag: GPG import, goreleaser)
+                              docs drift; no TF_ACC), release.yml (v* tag: GPG import, goreleaser).
+                              Actions are SHA-pinned with a `# vX.Y.Z` tag comment; Dependabot
+                              (.github/dependabot.yml) bumps both, plus Go modules
 .goreleaser.yml  terraform-registry-manifest.json (protocol 6.0)  GNUmakefile
 CHANGELOG.md                  hand-maintained (goreleaser changelog.disable: true)
 .build.ps1                    Invoke-Build tasks for Windows: the GNUmakefile targets plus

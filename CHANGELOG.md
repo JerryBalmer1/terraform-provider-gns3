@@ -22,3 +22,9 @@ Data sources:
 - `gns3_image`
 
 The GNS3 REST client is a public Go package, `github.com/JerryBalmer1/terraform-provider-gns3/pkg/gns3`.
+
+CI:
+
+- GitHub Actions moved to current majors (checkout v7, setup-go v7, setup-terraform v4, goreleaser-action v7, ghaction-import-gpg v7) and pinned to commit SHAs with a version comment.
+- Runner image pinned to `ubuntu-24.04`.
+- Dependabot updates actions and Go modules weekly, with minor and patch updates grouped.
