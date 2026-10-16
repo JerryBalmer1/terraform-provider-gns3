@@ -37,7 +37,10 @@ docs/                         tfplugindocs output (generated), except three hand
 examples/                     provider/provider.tf, resources/<type>/resource.tf + import.sh,
                               data-sources/<type>/data-source.tf; feed docs and TestExamples
 tools/tools.go                pins tfplugindocs (build tag tools)
+.github/workflows/            ci.yml (push to main, PRs: build, vet, gofmt, staticcheck, unit tests,
+                              docs drift; no TF_ACC), release.yml (v* tag: GPG import, goreleaser)
 .goreleaser.yml  terraform-registry-manifest.json (protocol 6.0)  GNUmakefile
+CHANGELOG.md                  hand-maintained (goreleaser changelog.disable: true)
 .build.ps1                    Invoke-Build tasks for Windows: the GNUmakefile targets plus
                               Gns3Status/Install/Start/Stop/Images, TestAcc, Checklist -Item <n.m>
 LICENSE (Apache-2.0)  NOTICE

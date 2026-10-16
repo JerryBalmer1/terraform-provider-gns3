@@ -1,0 +1,62 @@
+# Build, lint, unit tests and a docs drift check. Acceptance tests (TF_ACC=1)
+# need a live GNS3 server and are not run here.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Provider unit tests and tfplugindocs drive the terraform CLI.
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: go build
+        run: go build ./...
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: gofmt
+        run: |
+          out="$(gofmt -l .)"
+          if [ -n "$out" ]; then
+            echo "gofmt needed:"
+            echo "$out"
+            exit 1
+          fi
+
+      - name: staticcheck
+        run: |
+          go install honnef.co/go/tools/cmd/staticcheck@v0.8.1
+          staticcheck ./...
+
+      - name: go test
+        run: go test ./... -count=1 -timeout 10m
+
+      # Same commands as `make docs`; fails if docs/ is out of date.
+      - name: docs
+        run: |
+          go run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs generate --provider-name gns3
+          go run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs validate --provider-name gns3
+          git diff --exit-code docs/
+          untracked="$(git ls-files --others --exclude-standard docs/)"
+          if [ -n "$untracked" ]; then
+            echo "docs/ has files not in git:"
+            echo "$untracked"
+            exit 1
+          fi

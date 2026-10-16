@@ -1,6 +1,5 @@
 # GoReleaser config for the Terraform Registry, after HashiCorp's
-# terraform-provider-scaffolding-framework layout. Signing is configured but
-# nothing here has been run: releases are cut by the author.
+# terraform-provider-scaffolding-framework layout.
 # Needs GPG_FINGERPRINT in the environment and the key in the local keyring.
 version: 2
 before:

@@ -227,7 +227,9 @@ fmt.Println(v.Version)
 
 ## Release
 
-`.goreleaser.yml` builds the Registry layout (zip per OS/arch, `SHA256SUMS`, manifest) and signs the checksum file with GPG (`GPG_FINGERPRINT`). Nothing has been released and no tag exists; the author cuts releases.
+To release, update `CHANGELOG.md` (kept by hand), then push a tag `vX.Y.Z`. The `Release` workflow (`.github/workflows/release.yml`) imports the GPG key from the `GPG_PRIVATE_KEY` and `PASSPHRASE` repository secrets and runs GoReleaser (`.goreleaser.yml`). GoReleaser builds the Registry layout (a zip per OS/arch, `SHA256SUMS` and the manifest), signs the checksum file and publishes a GitHub release. The Terraform Registry picks up the new release from GitHub. The Registry needs the matching public key added to the namespace before the first release.
+
+The `CI` workflow (`.github/workflows/ci.yml`) runs on pushes to `main` and on pull requests. It runs build, vet, gofmt, staticcheck, the unit tests and a check that `docs/` matches the tfplugindocs output. It does not run acceptance tests.
 
 ## License
 
