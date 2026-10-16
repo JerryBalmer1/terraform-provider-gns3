@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -231,6 +232,13 @@ func examplesTestCase(env testEnv, file string) resource.TestCase {
 	if err != nil {
 		panic(err)
 	}
+	// The test runs the example from a scratch directory, so point
+	// ${path.module} at the example's own folder (files such as startup.vpc).
+	dir, err := filepath.Abs(filepath.Dir(file))
+	if err != nil {
+		panic(err)
+	}
+	src = []byte(strings.ReplaceAll(string(src), "${path.module}", filepath.ToSlash(dir)))
 	return resource.TestCase{
 		ProtoV6ProviderFactories: protoV6Factories,
 		CheckDestroy:             env.checkGone("gns3_project"),

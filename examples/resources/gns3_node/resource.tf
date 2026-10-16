@@ -7,12 +7,16 @@ data "gns3_template" "vpcs" {
   name = "VPCS"
 }
 
+# startup_config is written to the node's startup.vpc and read back on
+# refresh. Editing startup.vpc beside this file updates the node in place; the
+# new config takes effect the next time the node starts.
 resource "gns3_node" "pc1" {
-  project_id  = gns3_project.lab.project_id
-  template_id = data.gns3_template.vpcs.template_id
-  name        = "PC1"
-  x           = -150
-  y           = 0
+  project_id     = gns3_project.lab.project_id
+  template_id    = data.gns3_template.vpcs.template_id
+  name           = "PC1"
+  x              = -150
+  y              = 0
+  startup_config = file("${path.module}/startup.vpc")
 }
 
 # A template-less node: node_type, compute_id and emulator properties.

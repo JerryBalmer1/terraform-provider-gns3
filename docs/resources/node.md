@@ -22,12 +22,16 @@ data "gns3_template" "vpcs" {
   name = "VPCS"
 }
 
+# startup_config is written to the node's startup.vpc and read back on
+# refresh. Editing startup.vpc beside this file updates the node in place; the
+# new config takes effect the next time the node starts.
 resource "gns3_node" "pc1" {
-  project_id  = gns3_project.lab.project_id
-  template_id = data.gns3_template.vpcs.template_id
-  name        = "PC1"
-  x           = -150
-  y           = 0
+  project_id     = gns3_project.lab.project_id
+  template_id    = data.gns3_template.vpcs.template_id
+  name           = "PC1"
+  x              = -150
+  y              = 0
+  startup_config = file("${path.module}/startup.vpc")
 }
 
 # A template-less node: node_type, compute_id and emulator properties.
@@ -59,8 +63,9 @@ output "pc1_console" {
 - `compute_id` (String) Compute to run the node on. When unset, `local` is sent; a template with its own compute keeps it. Changing it replaces the node.
 - `console_type` (String) Console type: one of `vnc`, `telnet`, `http`, `https`, `spice`, `spice+agent`, `none`. The template or node type default when unset.
 - `node_type` (String) Emulator type for a template-less node: one of `cloud`, `nat`, `ethernet_hub`, `ethernet_switch`, `frame_relay_switch`, `atm_switch`, `docker`, `dynamips`, `vpcs`, `traceng`, `virtualbox`, `vmware`, `iou`, `qemu`. Read from the server when `template_id` is used. Changing it replaces the node.
-- `properties` (String) Emulator-specific properties as a JSON object (use `jsonencode`), only with `node_type`. Only the keys you set are compared with the server, so server-side defaults do not show as drift. For `vpcs`, `startup_script` is written to and read from the node's `startup.vpc` file rather than sent as a property, because GNS3 2.2 rejects it in node updates.
+- `properties` (String) Emulator-specific properties as a JSON object (use `jsonencode`), only with `node_type`. Only the keys you set are compared with the server, so server-side defaults do not show as drift. For `vpcs`, `startup_script` is written to and read from the node's `startup.vpc` file rather than sent as a property, because GNS3 2.2 rejects it in node updates. It cannot be combined with `startup_config`. For `dynamips`, `startup_config_content` and `private_config_content` are refused: GNS3 2.2 accepts them at create but then fails every later update of the node; use `startup_config` instead.
 - `start_on_create` (Boolean) Start the node right after it is created. Only acts at create; later changes are recorded but do not start or stop the node. Default `false`.
+- `startup_config` (String) Day-zero configuration as text; keep it in a file with `file("${path.module}/startup.vpc")`. The provider picks where it goes from the node type and writes it through the node files endpoint: `vpcs` → `startup.vpc`, `dynamips` → `configs/i<dynamips_id>_startup-config.cfg` in the node directory. It is read back on refresh, so changes made on the server show as drift. On create it is written before the node is started (`start_on_create`). A change is applied in place and takes effect the next time the node starts; a running node is not restarted. Removing the attribute stops managing the file and leaves its content. `qemu` has no startup configuration (the disk image holds it; appliances that build a config disk use `properties.create_config_disk`), and `iou` and `docker` are not supported yet: setting it on those, or on any other node type, is an error, at plan time when the node type (or the template's type) is known.
 - `symbol` (String) Symbol path, for example `:/symbols/computer.svg`. The template or node type default when unset.
 - `template_id` (String) Template UUID to create the node from, for example from the `gns3_template` data source. Changing it replaces the node.
 - `x` (Number) X position on the drawing area. Default `0`.

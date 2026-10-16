@@ -35,6 +35,7 @@ type fakeGNS3 struct {
 	images   map[string]map[string][]byte // emulator -> filename -> content (compute local)
 	uploads  int
 	console  int64
+	dynamips int64 // last dynamips_id handed out
 
 	// lockedDeletes is how many project DELETEs still fail with the 409 a
 	// Windows server returns while an emulator holds a project file open.
@@ -310,8 +311,25 @@ func (f *fakeGNS3) newNode(projectID, nodeType, name, computeID string, template
 		"node_id": newUUID(), "project_id": projectID, "compute_id": computeID, "template_id": templateID,
 		"node_type": nodeType, "name": name, "status": "stopped", "symbol": symbol,
 		"console": console, "console_type": consoleType, "console_host": "127.0.0.1",
-		"x": 0, "y": 0, "z": 1, "ports": ports, "properties": map[string]any{},
+		"x": 0, "y": 0, "z": 1, "ports": ports, "properties": f.newProperties(nodeType),
 	}
+}
+
+// newProperties: 2.2.61 numbers dynamips routers per project, from 1, in
+// properties.dynamips_id; other types start empty here.
+func (f *fakeGNS3) newProperties(nodeType string) map[string]any {
+	if nodeType != "dynamips" {
+		return map[string]any{}
+	}
+	f.dynamips++
+	return map[string]any{"dynamips_id": f.dynamips}
+}
+
+// dynamipsConfigs are the properties a 2.2.61 dynamips compute writes to
+// configs/i<dynamips_id>_<name>.cfg at create, with "!\n" in front, and that
+// its update schema rejects (seen on 2.2.61, docs/api-drift.md).
+var dynamipsConfigs = map[string]string{
+	"startup_config_content": "startup-config", "private_config_content": "private-config",
 }
 
 func (f *fakeGNS3) createNode(w http.ResponseWriter, r *http.Request, p map[string]any) {
@@ -336,6 +354,14 @@ func (f *fakeGNS3) createNode(w http.ResponseWriter, r *http.Request, p map[stri
 	// 2.2.61 writes a VPCS startup_script given at create to startup.vpc.
 	if s, ok := n["properties"].(map[string]any)["startup_script"].(string); ok && nodeType == "vpcs" {
 		f.writeFile(n["node_id"].(string), "startup.vpc", s)
+	}
+	if nodeType == "dynamips" {
+		props := n["properties"].(map[string]any)
+		for k, name := range dynamipsConfigs {
+			if s, ok := props[k].(string); ok {
+				f.writeFile(n["node_id"].(string), fmt.Sprintf("configs/i%d_%s.cfg", props["dynamips_id"], name), "!\n"+s)
+			}
+		}
 	}
 	f.nodes[n["node_id"].(string)] = n
 	reply(w, 201, n)
@@ -410,6 +436,16 @@ func (f *fakeGNS3) updateNode(w http.ResponseWriter, r *http.Request, n map[stri
 		if _, sent := props["startup_script"]; sent || cached {
 			fail(w, 400, "JSON schema error with API request: Additional properties are not allowed ('startup_script' was unexpected)")
 			return
+		}
+	}
+	if n["node_type"] == "dynamips" {
+		props, _ := body["properties"].(map[string]any)
+		for k := range dynamipsConfigs {
+			_, cached := n["properties"].(map[string]any)[k]
+			if _, sent := props[k]; sent || cached {
+				fail(w, 400, "JSON schema error with API request: Additional properties are not allowed ('%s' was unexpected)", k)
+				return
+			}
 		}
 	}
 	for _, k := range []string{"name", "x", "y", "z", "symbol", "console_type"} {

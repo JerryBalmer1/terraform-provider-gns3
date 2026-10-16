@@ -36,6 +36,8 @@ docs/                         tfplugindocs output (generated), except three hand
                               folders, free lab images, licensing)
 examples/                     provider/provider.tf, resources/<type>/resource.tf + import.sh,
                               data-sources/<type>/data-source.tf; feed docs and TestExamples
+test/scenarios/<name>/        scenario tests run by Invoke-Build Gns3Range (see "Scenario tests")
+test/images/                  images generated for scenarios (only .gitkeep is tracked)
 tools/tools.go                pins tfplugindocs (build tag tools)
 .github/workflows/            ci.yml (push to main, PRs: build, vet, gofmt, staticcheck, unit tests,
                               docs drift; no TF_ACC), release.yml (v* tag: GPG import, goreleaser).
@@ -97,3 +99,22 @@ go run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs validate --pr
 `make` isn't installed on Jerry's Windows machine. The `GNUmakefile` targets wrap these same commands (see README "Make targets"), and so do the `.build.ps1` tasks: `Invoke-Build` (Build, Lint, Test) and `Invoke-Build Docs`. Provider unit tests need `terraform` on `PATH`.
 
 Acceptance tests and manual-check-list section 1 need a GNS3 server: `Invoke-Build TestAcc -AutoStart` starts one with its own config under `$env:TEMP\gns3` and stops it afterwards; `Invoke-Build Checklist -Item 1.2` runs one check-list item in a fresh pwsh. Fixtures under `pkg/gns3/testdata` are recorded from a live server; when an endpoint changes, re-record that fixture rather than editing its response by hand.
+
+## Scenario tests
+
+`Invoke-Build Gns3Range` (or `-Scenario <name>`) runs each scenario against a live server. The server is the one already answering on `-Gns3Host`/`-Gns3Port`, or one started the way `Gns3Start` does and stopped afterwards. For each scenario it runs `terraform init -input=false`, `apply -auto-approve`, `terraform output -json` and `checks.ps1`, then `destroy -auto-approve`, which runs whenever init succeeded, even after a failed apply or failed checks. It prints a summary table and fails if any scenario failed.
+
+```
+test/scenarios/<name>/
+  scenario.json   { "name", "description", "requires": ["server"] or ["server","image"] }
+  main.tf         a real root module: source "JerryBalmer1/gns3", version "0.1.0", empty provider block
+  checks.ps1      param(-Server <base URL>, -Outputs <hashtable: output name -> value>); calls the
+                  GNS3 v2 API with Invoke-RestMethod and throws a clear message on any mismatch
+  README.md       what it builds, what checks.ps1 verifies, what the GNS3 GUI shows
+test/images/      files generated at run time for "image" scenarios; only .gitkeep is tracked
+```
+
+- **Scenarios use the published provider from the Registry, never the dev build.** No `dev_overrides`, no filesystem mirror. `Gns3Range` points `TF_CLI_CONFIG_FILE` at its own CLI config (`direct {}` only) and fails the scenario unless `.terraform.lock.hcl` locks `registry.terraform.io/jerrybalmer1/gns3` at the pinned version. To exercise unreleased code, use `TestAcc` instead.
+- `requires: "image"` makes `Gns3Range` write `test/images/scenario-dummy.img` before init. Its bytes never change, because GNS3 2.2 can't delete images and `gns3_image` refuses to upload over a different file of the same name.
+- In `checks.ps1`, unroll list responses (`Invoke-RestMethod ... | ForEach-Object { $_ }`): pwsh 7 writes a JSON array to the pipeline as one object.
+- **Adding a scenario.** When asked to add a scenario for a resource, attribute or behaviour not already covered, first read the provider schema (`internal/provider/<name>_resource.go` or `_data_source.go`) and its page under `docs/`. If what the scenario should assert is still unclear, stop and ask rather than invent expected values.

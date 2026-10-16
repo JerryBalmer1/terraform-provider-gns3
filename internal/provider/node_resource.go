@@ -34,6 +34,7 @@ var (
 	_ resource.ResourceWithImportState      = (*nodeResource)(nil)
 	_ resource.ResourceWithConfigValidators = (*nodeResource)(nil)
 	_ resource.ResourceWithModifyPlan       = (*nodeResource)(nil)
+	_ resource.ResourceWithValidateConfig   = (*nodeResource)(nil)
 )
 
 // defaultComputeID is sent when compute_id is unset: built-in templates have
@@ -68,6 +69,7 @@ type nodeResourceModel struct {
 	Symbol        types.String         `tfsdk:"symbol"`
 	ConsoleType   types.String         `tfsdk:"console_type"`
 	StartOnCreate types.Bool           `tfsdk:"start_on_create"`
+	StartupConfig types.String         `tfsdk:"startup_config"`
 	NodeID        types.String         `tfsdk:"node_id"`
 	Console       types.Int64          `tfsdk:"console"`
 	Status        types.String         `tfsdk:"status"`
@@ -128,7 +130,23 @@ func (r *nodeResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 				MarkdownDescription: "Emulator-specific properties as a JSON object (use `jsonencode`), only with `node_type`. " +
 					"Only the keys you set are compared with the server, so server-side defaults do not show as drift. " +
 					"For `vpcs`, `startup_script` is written to and read from the node's `startup.vpc` file rather than sent as a property, " +
-					"because GNS3 2.2 rejects it in node updates.",
+					"because GNS3 2.2 rejects it in node updates. It cannot be combined with `startup_config`. " +
+					"For `dynamips`, `startup_config_content` and `private_config_content` are refused: GNS3 2.2 accepts them " +
+					"at create but then fails every later update of the node; use `startup_config` instead.",
+			},
+			"startup_config": schema.StringAttribute{
+				Optional: true,
+				MarkdownDescription: "Day-zero configuration as text; keep it in a file with `file(\"${path.module}/startup.vpc\")`. " +
+					"The provider picks where it goes from the node type and writes it through the node files endpoint: " +
+					"`vpcs` → `startup.vpc`, `dynamips` → `configs/i<dynamips_id>_startup-config.cfg` in the node directory. " +
+					"It is read back on refresh, so changes made on the server show as drift. " +
+					"On create it is written before the node is started (`start_on_create`). " +
+					"A change is applied in place and takes effect the next time the node starts; a running node is not restarted. " +
+					"Removing the attribute stops managing the file and leaves its content. " +
+					"`qemu` has no startup configuration (the disk image holds it; appliances that build a config disk use " +
+					"`properties.create_config_disk`), and `iou` and `docker` are not supported yet: " +
+					"setting it on those, or on any other node type, is an error, at plan time when the node type " +
+					"(or the template's type) is known.",
 			},
 			"name": schema.StringAttribute{
 				Required:            true,
@@ -202,17 +220,57 @@ func (r *nodeResource) ConfigValidators(_ context.Context) []resource.ConfigVali
 	}
 }
 
+// ValidateConfig checks startup_config and properties against node_type when
+// the configuration sets node_type. A template's type is checked in ModifyPlan.
+func (r *nodeResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
+	var cfg nodeResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
+	if resp.Diagnostics.HasError() || cfg.NodeType.IsNull() || cfg.NodeType.IsUnknown() {
+		return
+	}
+	nodeType := cfg.NodeType.ValueString()
+	props := decodeProperties(cfg.Properties, &resp.Diagnostics)
+	_, files := splitProperties(nodeType, props, &resp.Diagnostics)
+	if cfg.StartupConfig.IsNull() {
+		return
+	}
+	checkStartupConfigType(nodeType, &resp.Diagnostics)
+	if file, ok := startupConfigFiles[nodeType]; ok {
+		if _, both := files[file]; both {
+			resp.Diagnostics.AddAttributeError(path.Root("startup_config"), "Conflicting startup configuration",
+				fmt.Sprintf("properties.startup_script and startup_config both write %s on a %s node; set only startup_config.", file, nodeType))
+		}
+	}
+}
+
 // ModifyPlan marks ports and console unknown when an in-place change can
-// alter them, so UseStateForUnknown does not promise stale values.
+// alter them, so UseStateForUnknown does not promise stale values. It also
+// rejects startup_config on a node type that has none, using the state's
+// node_type on update and the template's type on create.
 func (r *nodeResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
-	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
+	if req.Plan.Raw.IsNull() {
 		return
 	}
 	var plan, state nodeResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if req.State.Raw.IsNull() {
+		// A configured node_type was already checked in ValidateConfig.
+		if !plan.StartupConfig.IsNull() && !plan.TemplateID.IsNull() && r.client != nil {
+			if nodeType, ok := r.templateNodeType(ctx, plan, &resp.Diagnostics); ok {
+				checkStartupConfigType(nodeType, &resp.Diagnostics)
+			}
+		}
+		return
+	}
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
+	}
+	if !plan.StartupConfig.IsNull() && !state.NodeType.IsNull() {
+		checkStartupConfigType(state.NodeType.ValueString(), &resp.Diagnostics)
 	}
 	propsChanged := !plan.Properties.IsNull() && !plan.Properties.Equal(state.Properties)
 	consoleChanged := !plan.ConsoleType.Equal(state.ConsoleType)
@@ -288,12 +346,31 @@ var fileProperties = map[string]map[string]string{
 	"vpcs": {"startup_script": "startup.vpc"},
 }
 
+// refusedProperties lists, per node type, properties GNS3 2.2 accepts at
+// create but then caches and forwards on every later PUT to a compute schema
+// that rejects them, so the node can never be updated again (HTTP 400
+// "Additional properties are not allowed", seen on 2.2.61 for dynamips,
+// docs/api-drift.md). Unlike fileProperties there is no file to redirect
+// private_config_content to, so both are refused.
+var refusedProperties = map[string]map[string]string{
+	"dynamips": {
+		"startup_config_content": "use startup_config instead",
+		"private_config_content": "the provider does not manage the private config",
+	},
+}
+
 // splitProperties returns the properties to send to the API and the
 // file-backed ones as file path -> content.
 func splitProperties(nodeType string, props map[string]json.RawMessage, diags *diag.Diagnostics) (map[string]json.RawMessage, map[string]string) {
 	var rest map[string]json.RawMessage
 	files := map[string]string{}
 	for k, v := range props {
+		if why, refused := refusedProperties[nodeType][k]; refused {
+			diags.AddAttributeError(path.Root("properties"), "Unsupported node property",
+				fmt.Sprintf("properties.%s is not supported on %s nodes: GNS3 2.2 accepts it at create, then rejects every later "+
+					"update of the node (HTTP 400 \"Additional properties are not allowed\"); %s.", k, nodeType, why))
+			continue
+		}
 		file, ok := fileProperties[nodeType][k]
 		if !ok {
 			if rest == nil {
@@ -320,6 +397,109 @@ func writeNodeFiles(ctx context.Context, c gns3.Client, projectID, nodeID string
 		}
 	}
 	return nil
+}
+
+// startupConfigFiles is where startup_config goes for node types whose file
+// name is fixed (confirmed on 2.2.61, docs/api-drift.md). dynamips is handled
+// in startupConfigFile because its name includes the router's dynamips_id.
+var startupConfigFiles = map[string]string{
+	"vpcs": "startup.vpc",
+}
+
+// startupConfigUnsupported explains, per node type, why startup_config is
+// refused. Types not listed here or in startupConfigFiles (and not dynamips)
+// have no startup configuration at all.
+var startupConfigUnsupported = map[string]string{
+	"qemu": "a qemu node takes its configuration from its disk image, which GNS3 does not edit. " +
+		"Appliances that build a config disk use properties.create_config_disk instead.",
+	"iou":    "iou is not supported yet: its startup config has not been confirmed against a live GNS3 2.2 server.",
+	"docker": "docker is not supported yet: its config files have not been confirmed against a live GNS3 2.2 server.",
+}
+
+// checkStartupConfigType adds an error when nodeType has no supported
+// startup configuration.
+func checkStartupConfigType(nodeType string, diags *diag.Diagnostics) {
+	if _, ok := startupConfigFiles[nodeType]; ok || nodeType == "dynamips" {
+		return
+	}
+	why, ok := startupConfigUnsupported[nodeType]
+	if !ok {
+		why = fmt.Sprintf("a %s node has no startup configuration.", nodeType)
+	}
+	diags.AddAttributeError(path.Root("startup_config"), "startup_config not supported for node type "+nodeType,
+		"startup_config is supported on vpcs and dynamips nodes only: "+why)
+}
+
+// startupConfigFile is the path, relative to the node directory, that holds
+// n's startup configuration. dynamips keeps it in
+// configs/i<dynamips_id>_startup-config.cfg (seen on 2.2.61).
+func startupConfigFile(n *gns3.Node) (string, error) {
+	if file, ok := startupConfigFiles[n.NodeType]; ok {
+		return file, nil
+	}
+	if n.NodeType == "dynamips" {
+		var id int64
+		raw, ok := n.Properties["dynamips_id"]
+		if !ok || json.Unmarshal(raw, &id) != nil || id <= 0 {
+			return "", fmt.Errorf("dynamips node %s reports no dynamips_id (properties.dynamips_id = %s), so its startup config file is unknown", n.NodeID, raw)
+		}
+		return fmt.Sprintf("configs/i%d_startup-config.cfg", id), nil
+	}
+	var diags diag.Diagnostics
+	checkStartupConfigType(n.NodeType, &diags)
+	return "", fmt.Errorf("%s", diags.Errors()[0].Detail())
+}
+
+// templateNodeType returns the node type a create will produce: node_type
+// when configured, otherwise the template's type. ok is false when neither is
+// known yet.
+func (r *nodeResource) templateNodeType(ctx context.Context, plan nodeResourceModel, diags *diag.Diagnostics) (string, bool) {
+	if !plan.NodeType.IsNull() && !plan.NodeType.IsUnknown() {
+		return plan.NodeType.ValueString(), true
+	}
+	if plan.TemplateID.IsNull() || plan.TemplateID.IsUnknown() {
+		return "", false
+	}
+	t, err := r.client.GetTemplate(ctx, plan.TemplateID.ValueString())
+	if err != nil {
+		diags.AddError("Error reading GNS3 template for startup_config", err.Error())
+		return "", false
+	}
+	return t.TemplateType, true
+}
+
+// writeStartupConfig writes startup_config, when set, to n's startup file.
+func writeStartupConfig(ctx context.Context, c gns3.Client, n *gns3.Node, v types.String) error {
+	if v.IsNull() || v.IsUnknown() {
+		return nil
+	}
+	file, err := startupConfigFile(n)
+	if err != nil {
+		return err
+	}
+	return c.WriteNodeFile(ctx, n.ProjectID, n.NodeID, file, []byte(v.ValueString()))
+}
+
+// readStartupConfig is the server's startup file content when state manages
+// startup_config (null when the file is missing), otherwise state unchanged.
+func readStartupConfig(ctx context.Context, c gns3.Client, n *gns3.Node, state types.String, diags *diag.Diagnostics) types.String {
+	if state.IsNull() {
+		return state
+	}
+	file, err := startupConfigFile(n)
+	if err != nil {
+		diags.AddError("Error reading GNS3 node startup_config", err.Error())
+		return state
+	}
+	content, err := c.ReadNodeFile(ctx, n.ProjectID, n.NodeID, file)
+	if gns3.IsNotFound(err) {
+		return types.StringNull()
+	}
+	if err != nil {
+		diags.AddError("Error reading GNS3 node startup_config", err.Error())
+		return state
+	}
+	return types.StringValue(string(content))
 }
 
 // serverProperties is n.Properties with each file-backed key that state
@@ -383,6 +563,17 @@ func (r *nodeResource) Create(ctx context.Context, req resource.CreateRequest, r
 		computeID = *c
 	}
 
+	// Refuse an unsupported startup_config before anything is created; plan
+	// time may not have known the template.
+	if !plan.StartupConfig.IsNull() {
+		if nodeType, ok := r.templateNodeType(ctx, plan, &resp.Diagnostics); ok {
+			checkStartupConfigType(nodeType, &resp.Diagnostics)
+		}
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+
 	var n *gns3.Node
 	var err error
 	var files map[string]string
@@ -413,6 +604,10 @@ func (r *nodeResource) Create(ctx context.Context, req resource.CreateRequest, r
 
 	if err := writeNodeFiles(ctx, r.client, projectID, nodeID, files); err != nil {
 		resp.Diagnostics.AddError("Error writing GNS3 node file after create", err.Error())
+		return
+	}
+	if err := writeStartupConfig(ctx, r.client, n, plan.StartupConfig); err != nil {
+		resp.Diagnostics.AddError("Error writing GNS3 node startup_config after create", err.Error())
 		return
 	}
 
@@ -477,6 +672,7 @@ func (r *nodeResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	}
 	state.fromAPI(n, &resp.Diagnostics)
 	state.Properties = readProperties(state.Properties, serverProperties(ctx, r.client, n, state.Properties, &resp.Diagnostics), &resp.Diagnostics)
+	state.StartupConfig = readStartupConfig(ctx, r.client, n, state.StartupConfig, &resp.Diagnostics)
 	if state.StartOnCreate.IsNull() || state.StartOnCreate.IsUnknown() {
 		state.StartOnCreate = types.BoolValue(false) // after import
 	}
@@ -517,6 +713,13 @@ func (r *nodeResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	if err != nil {
 		resp.Diagnostics.AddError("Error reading GNS3 node after update", err.Error())
 		return
+	}
+	// The file is rewritten in place; the node reads it at its next start.
+	if !plan.StartupConfig.Equal(state.StartupConfig) {
+		if err := writeStartupConfig(ctx, r.client, n, plan.StartupConfig); err != nil {
+			resp.Diagnostics.AddError("Error writing GNS3 node startup_config", err.Error())
+			return
+		}
 	}
 	plan.fromAPI(n, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)

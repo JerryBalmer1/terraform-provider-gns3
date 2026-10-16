@@ -22,6 +22,40 @@ Endpoint: `PUT /v2/projects/{project_id}/nodes/{node_id}` ([docs](https://gns3-s
   The cached copy also goes stale: after `POST .../files/startup.vpc`, `GET .../nodes/{node_id}` still reports the old `startup_script`, even after a close and reopen.
 - **Client now:** `gns3_node` treats `startup_script` on `vpcs` nodes as file-backed (`fileProperties` in `internal/provider/node_resource.go`). It never sends the key in `properties`. On create and update it writes the value with `POST .../nodes/{node_id}/files/startup.vpc`, and on read it takes the value from `GET .../files/startup.vpc`. `TestAccNodeResource` step 2 renames the node and changes the script, and checks the file content.
 
+### Dynamips startup and private configs cannot be updated through node PUT
+
+Endpoint: `PUT /v2/projects/{project_id}/nodes/{node_id}` ([docs](https://gns3-server.readthedocs.io/en/stable/api/v2/controller/node/projectsprojectidnodesnodeid.html)). Probed on 2026-10-15 against a 2.2.61 server started by `Invoke-Build Gns3Start`, with a template-less c7200 node (`"image": "tf-probe-placeholder-c7200.image"`, a 60-byte text file uploaded to the `IOS` folder for the probe). The router was never started.
+
+- **Docs:** `properties` is forwarded to the compute; the dynamips compute create page lists `startup_config_content` and `private_config_content`.
+- **2.2.61:**
+  - Create works. `POST .../nodes` with both keys returns them in `properties`, and the compute writes them to `configs/i<dynamips_id>_startup-config.cfg` and `configs/i<dynamips_id>_private-config.cfg` in the node directory **with `!\n` prepended** (`"hostname R1\n"` became `"!\nhostname R1\n"`).
+  - Updating them fails. A PUT with either key is rejected by the compute's dynamips update schema, and nothing changes:
+
+    ```
+    HTTP 400: Bad request http://127.0.0.1:3080/v2/compute/projects/.../dynamips/nodes/... "JSON schema error with API request '...' and JSON data
+    '{'private_config_content': '! private updated\\n', 'startup_config_content': 'hostname R1-updated\\n', 'name': 'R1', 'console': 5004, 'console_type': 'telnet'}':
+    Additional properties are not allowed ('startup_config_content', 'private_config_content' were unexpected)"
+    ```
+
+  - As with VPCS `startup_script`, the controller caches the keys from create and forwards them on every later PUT. A rename with no `properties` (`{"name": "R1b"}`) fails with the same 400.
+  - `POST .../files/configs/i1_startup-config.cfg` writes the body exactly (no `!` prefix), `GET` returns it, and `GET .../nodes/{node_id}` keeps reporting the stale cached `startup_config_content`.
+  - **Not seen:** whether Dynamips loads the rewritten file at the next start. That needs a real IOS image.
+- **Client now:** `gns3_node` refuses `startup_config_content` and `private_config_content` in `properties` on `dynamips` nodes (`refusedProperties` in `internal/provider/node_resource.go`). `startup_config` writes and reads `configs/i<dynamips_id>_startup-config.cfg` through the files endpoint, with `dynamips_id` taken from the node's `properties`. The private config is not managed. `TestNodeStartupConfigDynamips` (fake) renames the node and changes the config in one update. `TestAccNodeStartupConfigDynamips` does the same against a live server, and skips when the server has no Dynamips template.
+
+### Startup configuration per node type
+
+Probed on 2026-10-15 against 2.2.61 on Windows, each with a throwaway project that was deleted afterwards. This is what `startup_config` on `gns3_node` follows.
+
+| Node type | 2.2.61 | `startup_config` |
+|---|---|---|
+| `vpcs` | `GET .../files/startup.vpc` is 404 before anything is written. `POST` writes it exactly, and `GET` returns the same bytes. The node's `properties` stay `{}`, and a rename afterwards succeeds | supported: `startup.vpc` |
+| `dynamips` | see the section above | supported: `configs/i<dynamips_id>_startup-config.cfg` |
+| `qemu` | the node's `properties` (2.2.61, with `platform` `x86_64`) have no startup-config key, and `GET .../files/startup-config.cfg` is 404. The one related key is `create_config_disk`, which builds a config disk on `hdd` from files in the node's config folder | refused at plan time; the error points to `properties.create_config_disk` |
+| `iou`, `docker` | not probed: the Windows compute's `capabilities.node_types` has neither | refused at plan time as "not supported yet" until probed on a GNS3 VM or Linux compute |
+| others (`cloud`, `nat`, switches, hubs, `traceng`, `virtualbox`, `vmware`) | not probed; no startup-config property in the docs | refused: "has no startup configuration" |
+
+A node created from a template gets the same check at plan time, after `GET /v2/templates/{template_id}` gives `template_type`.
+
 ### Project DELETE races the emulator process on Windows
 
 Endpoint: `DELETE /v2/projects/{project_id}` ([docs](https://gns3-server.readthedocs.io/en/stable/api/v2/controller/project/projectsprojectid.html)).
@@ -66,7 +100,7 @@ Endpoints: `GET /v2/computes/{compute_id}/{emulator}/images` ([docs](https://gns
 
 ## Confirmed as documented
 
-- `PUT /v2/projects/{project_id}/nodes/{node_id}` accepts the docs-shaped body (`compute_id`, `name`, `node_type` plus the changed fields) on any node that has no cached `startup_script`. The error echo leaves out `compute_id` and `node_type`, but they are accepted.
+- `PUT /v2/projects/{project_id}/nodes/{node_id}` accepts the docs-shaped body (`compute_id`, `name`, `node_type` plus the changed fields) on any node that has no cached `startup_script` (vpcs) or `startup_config_content`/`private_config_content` (dynamips). The error echo leaves out `compute_id` and `node_type`, but they are accepted.
 - `POST /v2/projects/{project_id}/close` returns 204 with an empty body; `POST .../open` returns 201 with the project.
 - Creating a node from a template with `"name": "PC1"` keeps the name `PC1` (no server-side rename).
 - `POST .../links` with both ends on the same node returns 409 `Cannot connect to itself` (recorded against a built-in Ethernet switch; on a one-port VPCS node the server answers 404 first, because port 3 doesn't exist).
