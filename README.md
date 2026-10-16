@@ -1,6 +1,6 @@
 # terraform-provider-gns3
 
-A Terraform provider for [GNS3](https://www.gns3.com/): projects, nodes, links and emulator images on a GNS3 server, managed through its REST API. Registry address `JerryBalmer1/gns3`, version 0.1.0.
+A Terraform provider for [GNS3](https://www.gns3.com/): projects, nodes, links and emulator images on a GNS3 server, managed through its REST API. Registry address `JerryBalmer1/gns3`, version 0.2.0.
 
 ## GNS3 version
 
@@ -187,7 +187,7 @@ To get the old behaviour back, delete the `dev_overrides` block (or restore `ter
 | `make test` | `go test ./... -count=1 -timeout 10m` |
 | `make testacc` | `$env:TF_ACC = '1'; go test ./internal/provider/ -run TestAcc -count=1 -v -timeout 60m` |
 | `make docs` | `go run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs generate --provider-name gns3`, then `... validate --provider-name gns3` |
-| `make lint` | `go vet ./...`; `go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...`; `gofmt -l .` (must print nothing) |
+| `make lint` | `go vet ./...`; `go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...` with `GOTOOLCHAIN=go1.25.8` set for that command (v0.7.0 can't read Go 1.27 export data); `gofmt -l .` (must print nothing) |
 
 ## Using the client without Terraform
 

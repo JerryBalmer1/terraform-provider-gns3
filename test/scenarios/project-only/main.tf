@@ -2,7 +2,7 @@ terraform {
   required_providers {
     gns3 = {
       source  = "JerryBalmer1/gns3"
-      version = "0.1.0"
+      version = "0.2.0"
     }
   }
 }

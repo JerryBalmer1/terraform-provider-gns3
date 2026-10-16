@@ -1,6 +1,6 @@
 # terraform-provider-gns3
 
-Terraform provider for GNS3, built on `terraform-plugin-framework` (not SDKv2). Module `github.com/JerryBalmer1/terraform-provider-gns3`, registry address `JerryBalmer1/gns3`, version 0.1.0 (`var version` in `main.go`; GoReleaser overrides it with `-X main.version`). It targets GNS3 server 2.2.x over REST v2 and was built against the 2.2.52 docs.
+Terraform provider for GNS3, built on `terraform-plugin-framework` (not SDKv2). Module `github.com/JerryBalmer1/terraform-provider-gns3`, registry address `JerryBalmer1/gns3`, version 0.2.0 (`var version` in `main.go`; GoReleaser overrides it with `-X main.version`). It targets GNS3 server 2.2.x over REST v2 and was built against the 2.2.52 docs.
 
 ## Working rules
 
@@ -89,12 +89,14 @@ On Linux or macOS the same block goes in `~/.terraformrc`. With the override in 
 ```powershell
 go build ./...
 go vet ./...
-go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...
+$env:GOTOOLCHAIN = 'go1.25.8'; go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...; Remove-Item Env:GOTOOLCHAIN
 gofmt -l .            # must print nothing
 go test ./... -count=1
 go run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs generate --provider-name gns3
 go run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs validate --provider-name gns3
 ```
+
+staticcheck v0.7.0 can't read export data from Go 1.27 (the local toolchain), so it runs with `GOTOOLCHAIN=go1.25.8` (the `go.mod` version) set for that one command; the `Lint` task and `make lint` do the same.
 
 `make` isn't installed on Jerry's Windows machine. The `GNUmakefile` targets wrap these same commands (see README "Make targets"), and so do the `.build.ps1` tasks: `Invoke-Build` (Build, Lint, Test) and `Invoke-Build Docs`. Provider unit tests need `terraform` on `PATH`.
 
@@ -107,7 +109,7 @@ Acceptance tests and manual-check-list section 1 need a GNS3 server: `Invoke-Bui
 ```
 test/scenarios/<name>/
   scenario.json   { "name", "description", "requires": ["server"] or ["server","image"] }
-  main.tf         a real root module: source "JerryBalmer1/gns3", version "0.1.0", empty provider block
+  main.tf         a real root module: source "JerryBalmer1/gns3", version "0.2.0", empty provider block
   checks.ps1      param(-Server <base URL>, -Outputs <hashtable: output name -> value>); calls the
                   GNS3 v2 API with Invoke-RestMethod and throws a clear message on any mismatch
   README.md       what it builds, what checks.ps1 verifies, what the GNS3 GUI shows

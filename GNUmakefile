@@ -30,9 +30,11 @@ docs:
 	$(GO) run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs validate --provider-name gns3
 
 # go vet, staticcheck, and a gofmt check that fails on any unformatted file.
+# staticcheck v0.7.0 cannot read export data from newer Go releases (1.27), so it
+# runs under the go.mod toolchain; GOTOOLCHAIN is set for that command only.
 lint:
 	$(GO) vet ./...
-	$(STATICCHECK) ./...
+	GOTOOLCHAIN=go1.25.8 $(STATICCHECK) ./...
 	@out="$$(gofmt -l .)"; if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi
 
 fmt:

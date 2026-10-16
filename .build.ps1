@@ -350,8 +350,8 @@ function Invoke-Scenario {
         $initDone = $true
         # The lock file names where the provider came from: it must be the Registry build.
         $lock = Get-Content -LiteralPath (Join-Path $Dir '.terraform.lock.hcl') -Raw
-        if ($lock -notmatch 'provider "registry\.terraform\.io/jerrybalmer1/gns3" \{\s+version\s+=\s+"0\.1\.0"') {
-            throw "init did not lock registry.terraform.io/jerrybalmer1/gns3 0.1.0. Lock file:`n$lock"
+        if ($lock -notmatch 'provider "registry\.terraform\.io/jerrybalmer1/gns3" \{\s+version\s+=\s+"0\.2\.0"') {
+            throw "init did not lock registry.terraform.io/jerrybalmer1/gns3 0.2.0. Lock file:`n$lock"
         }
         $step = 'apply'
         Invoke-Native terraform "-chdir=$Dir", apply, -auto-approve, -input=false, -no-color | Out-Host
@@ -565,7 +565,16 @@ task Test {
 
 task Lint {
     Invoke-Native go vet, ./...
-    Invoke-Native go run, honnef.co/go/tools/cmd/staticcheck@v0.7.0, ./...
+    # staticcheck v0.7.0 cannot read export data from newer Go releases (1.27 on Jerry's machine),
+    # so it runs under the go.mod toolchain. GOTOOLCHAIN is set for this command only.
+    $savedToolchain = $env:GOTOOLCHAIN
+    $env:GOTOOLCHAIN = 'go1.25.8'
+    try {
+        Invoke-Native go run, honnef.co/go/tools/cmd/staticcheck@v0.7.0, ./...
+    }
+    finally {
+        $env:GOTOOLCHAIN = $savedToolchain
+    }
     $unformatted = gofmt -l .
     if ($LASTEXITCODE -ne 0) { throw "gofmt -l failed with exit code $LASTEXITCODE" }
     if ($unformatted) {

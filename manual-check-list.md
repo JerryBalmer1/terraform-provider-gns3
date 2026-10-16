@@ -1,6 +1,6 @@
 # terraform-provider-gns3 manual check list
 
-Provider version: 0.1.0
+Provider version: 0.2.0
 Built against: GNS3 server 2.2.52 docs (REST v2); live-checked against GNS3 server 2.2.61 on 2026-10-07 (see docs/api-drift.md)
 Last updated: 2026-10-15
 
@@ -35,7 +35,7 @@ $s = (terraform providers schema -json | ConvertFrom-Json).provider_schemas.'reg
 Pop-Location; Remove-Item -Recurse -Force $d
 ```
 
-Expect: `0.1.0`, then `resources:    gns3_image, gns3_link, gns3_node, gns3_project` and `data sources: gns3_compute, gns3_image, gns3_project, gns3_template, gns3_version` (seen 2026-10-15; `gns3_image` added in both lists).
+Expect: `0.2.0`, then `resources:    gns3_image, gns3_link, gns3_node, gns3_project` and `data sources: gns3_compute, gns3_image, gns3_project, gns3_template, gns3_version` (seen 2026-10-15; `gns3_image` added in both lists; version bumped to 0.2.0 on 2026-10-15).
 
 Tests: none (the schema listing is not asserted in Go; `TestExamples` loads every resource type)
 

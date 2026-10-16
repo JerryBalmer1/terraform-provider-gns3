@@ -13,7 +13,7 @@ import (
 
 // version is set by GoReleaser (-X main.version=...); the default is the
 // release this source tree is.
-var version = "0.1.0"
+var version = "0.2.0"
 
 func main() {
 	var debug, showVersion bool

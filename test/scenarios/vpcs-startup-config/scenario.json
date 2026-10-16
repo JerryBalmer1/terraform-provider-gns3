@@ -1,0 +1,5 @@
+{
+  "name": "vpcs-startup-config",
+  "description": "Two linked VPCS nodes whose startup.vpc is set through startup_config (10.0.0.1/24 and 10.0.0.2/24).",
+  "requires": ["server"]
+}
