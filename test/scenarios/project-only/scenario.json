@@ -1,0 +1,5 @@
+{
+  "name": "project-only",
+  "description": "One empty gns3_project with non-default grid and scene settings.",
+  "requires": ["server"]
+}

@@ -1,0 +1,5 @@
+{
+  "name": "two-nodes-one-link",
+  "description": "A project with two VPCS nodes from the built-in VPCS template, joined by one link.",
+  "requires": ["server"]
+}

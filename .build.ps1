@@ -25,7 +25,11 @@ Param(
 
     # Gns3Images: the compute whose images to list.
     [string]
-    $ComputeId = 'local'
+    $ComputeId = 'local',
+
+    # Gns3Range: run only the scenario with this name (its scenario.json "name").
+    [string]
+    $Scenario
 )
 
 # InvokeBuild must already be installed (Install-Module InvokeBuild -Scope CurrentUser); this
@@ -299,6 +303,88 @@ function Stop-Gns3Server {
     Write-Host "Stopped gns3server PID $($process.Id) (and $($children.Count) child process(es))." -ForegroundColor Green
 }
 
+function New-ScenarioDummyImage {
+    # test/images/scenario-dummy.img for scenarios that require "image": 1 MiB, the same bytes on
+    # every run, because GNS3 2.2 cannot delete images and gns3_image refuses to upload over a
+    # different file of the same name. Not ELF, so the qemu list shows it.
+    $dir = Join-Path $PSScriptRoot 'test' 'images'
+    $null = New-Item -ItemType Directory -Force -Path $dir -ErrorAction Stop
+    $file = Join-Path $dir 'scenario-dummy.img'
+    $bytes = [byte[]]::new(1MB)
+    for ($i = 0; $i -lt $bytes.Length; $i++) { $bytes[$i] = [byte]($i % 251) }
+    $header = [Text.Encoding]::ASCII.GetBytes("terraform-provider-gns3 scenario dummy image; not bootable`n")
+    [Array]::Copy($header, $bytes, $header.Length)
+    [IO.File]::WriteAllBytes($file, $bytes)
+    $file
+}
+
+function ConvertFrom-TerraformOutput {
+    # terraform output -json gives { name: { sensitive, type, value } }; checks.ps1 gets name -> value.
+    param([string] $Json)
+    $outputs = @{}
+    $raw = $Json | ConvertFrom-Json -AsHashtable
+    if ($raw) {
+        foreach ($key in $raw.Keys) { $outputs[$key] = $raw[$key].value }
+    }
+    $outputs
+}
+
+function Invoke-Scenario {
+    # Runs one scenario folder: init, apply, output, checks.ps1, then destroy, which runs whenever
+    # init succeeded (also after a failed apply or failed checks). Returns a summary row.
+    param([string] $Dir, [pscustomobject] $Meta, [string] $Server)
+    $row = [pscustomobject]@{ Scenario = $Meta.name; Result = 'FAIL'; FailedStep = $null; Seconds = 0; Message = '' }
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    $step = 'requires'
+    $initDone = $false
+    try {
+        foreach ($need in @($Meta.requires)) {
+            switch ($need) {
+                'server' { }
+                'image' { Write-Host "Wrote $(New-ScenarioDummyImage)" }
+                default { throw "scenario.json requires '$need', which Gns3Range does not know (server, image)." }
+            }
+        }
+        $step = 'init'
+        Invoke-Native terraform "-chdir=$Dir", init, -input=false, -no-color | Out-Host
+        $initDone = $true
+        # The lock file names where the provider came from: it must be the Registry build.
+        $lock = Get-Content -LiteralPath (Join-Path $Dir '.terraform.lock.hcl') -Raw
+        if ($lock -notmatch 'provider "registry\.terraform\.io/jerrybalmer1/gns3" \{\s+version\s+=\s+"0\.1\.0"') {
+            throw "init did not lock registry.terraform.io/jerrybalmer1/gns3 0.1.0. Lock file:`n$lock"
+        }
+        $step = 'apply'
+        Invoke-Native terraform "-chdir=$Dir", apply, -auto-approve, -input=false, -no-color | Out-Host
+        $step = 'output'
+        $json = terraform "-chdir=$Dir" output -json -no-color
+        if ($LASTEXITCODE -ne 0) { throw "terraform output -json failed with exit code $LASTEXITCODE" }
+        $outputs = ConvertFrom-TerraformOutput -Json ($json -join "`n")
+        $step = 'checks'
+        & (Join-Path $Dir 'checks.ps1') -Server $Server -Outputs $outputs
+        $row.Result = 'PASS'
+    }
+    catch {
+        $row.FailedStep = $step
+        $row.Message = "$_"
+        Write-Host "$($Meta.name): $step failed: $_" -ForegroundColor Red
+    }
+    finally {
+        if ($initDone) {
+            try {
+                Invoke-Native terraform "-chdir=$Dir", destroy, -auto-approve, -input=false, -no-color | Out-Host
+            }
+            catch {
+                $row.Result = 'FAIL'
+                if (-not $row.FailedStep) { $row.FailedStep = 'destroy'; $row.Message = "$_" }
+                else { $row.Message += " (destroy also failed: $_)" }
+                Write-Host "$($Meta.name): destroy failed: $_" -ForegroundColor Red
+            }
+        }
+        $row.Seconds = [int]$clock.Elapsed.TotalSeconds
+    }
+    $row
+}
+
 ######################################################################################################
 # InvokeBuild - Tasks
 ######################################################################################################
@@ -528,6 +614,59 @@ task TestAcc {
         throw "Acceptance tests failed (exit code $code). Log: $log"
     }
     Write-Host "Acceptance tests passed. Log: $log" -ForegroundColor Green
+}
+
+# Runs each scenario under test/scenarios (or only -Scenario <name>) against a live server with
+# the provider published on the Registry: init, apply, output -json, checks.ps1, destroy. Starts
+# a server like Gns3Start when nothing answers and stops afterwards only the server it started.
+# Terraform runs with a CLI config of its own (direct {} only), so dev_overrides and filesystem
+# mirrors in Jerry's terraform.rc never replace the Registry build.
+task Gns3Range {
+    $found = @(Get-ChildItem -Path (Join-Path $PSScriptRoot 'test' 'scenarios' '*' 'scenario.json') -File | ForEach-Object {
+        [pscustomobject]@{ Dir = $_.DirectoryName; Meta = Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json }
+    })
+    if (-not $found) {
+        throw 'No scenarios: test/scenarios/*/scenario.json matched nothing.'
+    }
+    $run = if ($Scenario) { @($found | Where-Object { $_.Meta.name -eq $Scenario }) } else { $found }
+    if (-not $run) {
+        throw "No scenario named '$Scenario'. Scenarios: $(@($found.Meta.name) -join ', ')"
+    }
+
+    $started = $null
+    if (-not (Invoke-Gns3Version)) {
+        $started = Start-Gns3Server
+    }
+    $null = New-Item -ItemType Directory -Force -Path $Gns3Work -ErrorAction Stop
+    $cliConfig = Join-Path $Gns3Work 'scenario-terraform.rc'
+    "provider_installation {`n  direct {}`n}" | Set-Content -LiteralPath $cliConfig -Encoding ascii -ErrorAction Stop
+    $saved = @{}
+    foreach ($name in 'TF_CLI_CONFIG_FILE', 'TF_IN_AUTOMATION', 'GNS3_HOST', 'GNS3_PORT') {
+        $saved[$name] = [Environment]::GetEnvironmentVariable($name)
+    }
+    $env:TF_CLI_CONFIG_FILE = $cliConfig
+    $env:TF_IN_AUTOMATION = '1'
+    $env:GNS3_HOST = $Gns3Host
+    $env:GNS3_PORT = [string]$Gns3Port
+    $server = "http://${Gns3Host}:$Gns3Port"
+    try {
+        $rows = foreach ($s in $run) {
+            Write-Host "== $($s.Meta.name): $($s.Meta.description)" -ForegroundColor Cyan
+            Invoke-Scenario -Dir $s.Dir -Meta $s.Meta -Server $server
+        }
+    }
+    finally {
+        foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name]) }
+        if ($started) {
+            Stop-Gns3Server
+        }
+    }
+    $rows | Format-Table -AutoSize -Wrap | Out-String -Width 250 | Write-Host
+    $failed = @($rows | Where-Object Result -ne 'PASS')
+    if ($failed) {
+        throw "$($failed.Count) of $(@($rows).Count) scenario(s) failed: $(@($failed.Scenario) -join ', ')"
+    }
+    Write-Host "All $(@($rows).Count) scenario(s) passed against $server." -ForegroundColor Green
 }
 
 # Runs one manual-check-list.md item's PowerShell block in a fresh pwsh and prints its output

@@ -1,0 +1,5 @@
+{
+  "name": "image-upload",
+  "description": "Uploads a generated 1 MiB dummy file to the local compute's qemu images with gns3_image.",
+  "requires": ["server", "image"]
+}
