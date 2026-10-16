@@ -187,7 +187,7 @@ To get the old behaviour back, delete the `dev_overrides` block (or restore `ter
 | `make test` | `go test ./... -count=1 -timeout 10m` |
 | `make testacc` | `$env:TF_ACC = '1'; go test ./internal/provider/ -run TestAcc -count=1 -v -timeout 60m` |
 | `make docs` | `go run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs generate --provider-name gns3`, then `... validate --provider-name gns3` |
-| `make lint` | `go vet ./...`; `go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...`; `gofmt -l .` (must print nothing) |
+| `make lint` | `go vet ./...`; `go run honnef.co/go/tools/cmd/staticcheck@v0.7.0 ./...`; `gofmt -l .` (must print nothing) |
 
 ## Using the client without Terraform
 

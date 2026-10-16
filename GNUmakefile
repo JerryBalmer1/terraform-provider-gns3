@@ -2,7 +2,7 @@ default: build
 
 GO ?= go
 # Pinned via go run so an old staticcheck on PATH cannot reject the go 1.25 module.
-STATICCHECK ?= $(GO) run honnef.co/go/tools/cmd/staticcheck@v0.8.1
+STATICCHECK ?= $(GO) run honnef.co/go/tools/cmd/staticcheck@v0.7.0
 
 .PHONY: build install test testacc docs lint fmt
 

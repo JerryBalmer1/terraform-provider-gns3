@@ -304,7 +304,7 @@ func (r *imageResource) Create(ctx context.Context, req resource.CreateRequest, 
 		existing = &img
 	}
 
-	img := gns3.Image{}
+	var img gns3.Image
 	if existing != nil && want != nil && existing.MD5Sum == *want {
 		img = *existing // already there: adopt without reading the source
 	} else if img, err = r.upload(ctx, plan, want, existing); err != nil {
