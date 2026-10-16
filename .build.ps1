@@ -77,10 +77,11 @@ Register-ArgumentCompleter -CommandName Invoke-Build.ps1 -ParameterName File -Sc
 
 # Everything the GNS3 tasks download or write lives here, never in Jerry's GNS3 settings.
 # GetTempPath() is $env:TEMP on Windows and also works on the Linux CI runner, where $env:TEMP
-# and $env:ProgramFiles are unset and Join-Path would fail while the script loads (Test-Docs).
+# is unset. The GNS3 install folder exists only on Windows: Join-Path rejects a C:\ path on
+# Linux while the script loads (Test-Docs), so it stays $null there and Get-Gns3Install throws.
 $Gns3Work = Join-Path ([IO.Path]::GetTempPath()) 'gns3'
 $Gns3PidFile = Join-Path $Gns3Work 'server.pid'
-$Gns3DefaultFolder = Join-Path ($env:ProgramFiles ?? 'C:\Program Files') 'GNS3'
+$Gns3DefaultFolder = if ($IsWindows) { Join-Path ($env:ProgramFiles ?? 'C:\Program Files') 'GNS3' } else { $null }
 
 # The all-in-one installer's optional components, from its components page (GNS3 2.2.x).
 # The provider's tests need only the GNS3 server and VPCS (plus uBridge, which the server uses
@@ -106,6 +107,10 @@ function Invoke-Native {
 }
 
 function Get-Gns3Install {
+    # Gns3Status, Gns3Install, Gns3Start and any task that starts a server come through here.
+    if (-not $IsWindows) {
+        throw 'GNS3 server tasks run on Windows only.'
+    }
     # Registry uninstall keys first (they carry the version), then the default folder.
     $keys = @(
         'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',

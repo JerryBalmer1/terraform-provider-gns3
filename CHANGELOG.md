@@ -21,7 +21,7 @@ Build (`.build.ps1`):
 - `Gns3Range` runs `terraform init -upgrade`. It fails a scenario without applying or destroying when its state still holds resources from an earlier run.
 - New `Gns3Range -Dev`: runs the scenarios with a `go build` of the checkout through a `dev_overrides` CLI config of its own, skips the lock-file version check and prints `DEV BUILD` in the summary.
 - New `Gns3Range -Capture`: a stub that prints "capture not implemented". `docs/screenshots/` is tracked for it.
-- The script now loads on Linux (CI): its temp and Program Files paths no longer assume Windows environment variables.
+- The script now loads on Linux (CI): the GNS3 install folder is only resolved on Windows, and the GNS3 server tasks fail there with "GNS3 server tasks run on Windows only".
 
 Docs:
 
