@@ -14,14 +14,14 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
       # Provider unit tests and tfplugindocs drive the terraform CLI.
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_wrapper: false
 
@@ -60,3 +60,10 @@ jobs:
             echo "$untracked"
             exit 1
           fi
+
+      # Validates .goreleaser.yml so a broken config fails here, not on a tag push.
+      - name: goreleaser check
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: check
