@@ -21,7 +21,11 @@ Param(
 
     # Checklist: the manual-check-list.md item to run, for example 1.2.
     [string]
-    $Item
+    $Item,
+
+    # Gns3Images: the compute whose images to list.
+    [string]
+    $ComputeId = 'local'
 )
 
 # InvokeBuild must already be installed (Install-Module InvokeBuild -Scope CurrentUser); this
@@ -409,6 +413,55 @@ task Gns3Start {
 # from the GUI.
 task Gns3Stop {
     Stop-Gns3Server
+}
+
+# Lists the images on -ComputeId (default local) for each emulator through the controller:
+# GET /v2/computes/{compute_id}/{qemu,dynamips,iou}/images, then .../docker/images. Uses the
+# provider's GNS3_HOST, GNS3_PORT, GNS3_USERNAME and GNS3_PASSWORD. Downloads and uploads nothing.
+task Gns3Images {
+    $headers = @{}
+    if ($env:GNS3_USERNAME) {
+        $pair = [Text.Encoding]::UTF8.GetBytes("$($env:GNS3_USERNAME):$($env:GNS3_PASSWORD)")
+        $headers.Authorization = 'Basic ' + [Convert]::ToBase64String($pair)
+    }
+    $base = "http://${Gns3Host}:$Gns3Port/v2/computes/$([uri]::EscapeDataString($ComputeId))"
+    if (-not (Invoke-Gns3Version)) {
+        throw "No GNS3 server answers on http://${Gns3Host}:$Gns3Port/v2/version. Start one (Invoke-Build Gns3Start) and rerun."
+    }
+    # A compute without an emulator (iou and docker on Windows) answers 404 "GET /iou/images not found".
+    $get = {
+        param([string] $Emulator)
+        try {
+            $list = Invoke-RestMethod -Uri "$base/$Emulator/images" -Headers $headers -TimeoutSec 60 -ErrorAction Stop
+            [pscustomobject]@{ Ok = $true; Items = @($list | ForEach-Object { $_ }) }
+        }
+        catch {
+            $status = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { $null }
+            $message = $_.Exception.Message
+            if ($_.ErrorDetails.Message) {
+                $message = try { ($_.ErrorDetails.Message | ConvertFrom-Json).message } catch { $_.ErrorDetails.Message }
+            }
+            Write-Host "${Emulator}: $(if ($status) { "HTTP $status, " })$message$(if ($status -eq 404) { ' (this compute has no ' + $Emulator + ' support, or the compute does not exist)' })" -ForegroundColor Yellow
+            [pscustomobject]@{ Ok = $false; Items = @() }
+        }
+    }
+    $rows = foreach ($emulator in 'qemu', 'dynamips', 'iou') {
+        foreach ($image in (& $get $emulator).Items) {
+            [pscustomobject]@{
+                Emulator = $emulator
+                Filename = $image.filename
+                SizeMB   = [math]::Round($image.filesize / 1MB, 1)
+                MD5      = $image.md5sum
+                Path     = $image.path
+            }
+        }
+    }
+    Write-Host "Images on compute '$ComputeId' at http://${Gns3Host}:${Gns3Port}:"
+    $rows | Format-Table -AutoSize | Out-String -Width 250 | Write-Host
+    $docker = & $get 'docker'
+    if ($docker.Ok) {
+        Write-Host "Docker images known to the compute's daemon: $(if ($docker.Items.Count) { ($docker.Items.image | Sort-Object) -join ', ' } else { '(none)' })"
+    }
 }
 
 task Build {

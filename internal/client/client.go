@@ -34,6 +34,7 @@ type Client interface {
 	LinksAPI
 	TemplatesAPI
 	ComputesAPI
+	ImagesAPI
 	VersionAPI
 
 	// APIVersion is the REST API generation this client speaks, "v2" or "v3".
@@ -185,9 +186,19 @@ func (c *v2Client) send(ctx context.Context, method, endpoint string, body []byt
 	if body != nil {
 		reader = bytes.NewReader(body)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+endpoint, reader)
+	return c.sendStream(ctx, c.httpClient, method, endpoint, reader, -1, contentType, string(body))
+}
+
+// sendStream is send with a streamed body. size is the body length, or -1
+// when it is unknown or the reader reports it itself; errBody is what an
+// APIError quotes as the request body.
+func (c *v2Client) sendStream(ctx context.Context, hc *http.Client, method, endpoint string, body io.Reader, size int64, contentType, errBody string) ([]byte, int, error) {
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+endpoint, body)
 	if err != nil {
 		return nil, 0, fmt.Errorf("GNS3 API %s %s: building request: %w", method, endpoint, err)
+	}
+	if size >= 0 {
+		req.ContentLength = size
 	}
 	req.Header.Set("Accept", "application/json")
 	if body != nil {
@@ -200,7 +211,7 @@ func (c *v2Client) send(ctx context.Context, method, endpoint string, body []byt
 		req.SetBasicAuth(c.cfg.Username, c.cfg.Password)
 	}
 
-	resp, err := c.httpClient.Do(req)
+	resp, err := hc.Do(req)
 	if err != nil {
 		return nil, 0, fmt.Errorf("GNS3 API %s %s: %w", method, endpoint, err)
 	}
@@ -213,7 +224,7 @@ func (c *v2Client) send(ctx context.Context, method, endpoint string, body []byt
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return nil, resp.StatusCode, &APIError{
 			Method: method, Endpoint: endpoint, StatusCode: resp.StatusCode, Message: errorMessage(respBody),
-			RequestBody: string(body), ResponseBody: string(respBody),
+			RequestBody: errBody, ResponseBody: string(respBody),
 		}
 	}
 	return respBody, resp.StatusCode, nil

@@ -1,0 +1,13 @@
+{
+  "_header": "recorded from GNS3 2.2.61 on 2026-10-15",
+  "_source": "https://gns3-server.readthedocs.io/en/stable/api/v2/controller/compute/sidemulatorimages.html",
+  "_notes": "dynamips on a fresh Windows server: no IOS images. Dynamips and IOU list only ELF executables; a non-ELF file uploaded as dynamips is not listed here (docs/api-drift.md).",
+  "request": {
+    "method": "GET",
+    "path": "/v2/computes/local/dynamips/images"
+  },
+  "response": {
+    "status": 200,
+    "body": []
+  }
+}

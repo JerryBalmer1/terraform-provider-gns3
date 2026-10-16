@@ -2,7 +2,7 @@
 
 Provider version: 0.1.0
 Built against: GNS3 server 2.2.52 docs (REST v2); live-checked against GNS3 server 2.2.61 on 2026-10-07 (see docs/api-drift.md)
-Last updated: 2026-10-07
+Last updated: 2026-10-15
 
 Append-only: never renumber items. New items go at the end of their section; a withdrawn item keeps its number with "(removed in 0.x.0)". Every block is self-contained. It installs the provider with `go install .` and writes its own dev-override CLI config under `$env:TEMP` through `TF_CLI_CONFIG_FILE`, so `%APPDATA%\terraform.rc` is never read or changed. An Expect marked "(not yet seen: needs a GNS3 server)" is what the code and docs predict; replace the marker once you have seen it.
 
@@ -35,7 +35,7 @@ $s = (terraform providers schema -json | ConvertFrom-Json).provider_schemas.'reg
 Pop-Location; Remove-Item -Recurse -Force $d
 ```
 
-Expect: `0.1.0`, then `resources:    gns3_link, gns3_node, gns3_project` and `data sources: gns3_compute, gns3_project, gns3_template, gns3_version`.
+Expect: `0.1.0`, then `resources:    gns3_image, gns3_link, gns3_node, gns3_project` and `data sources: gns3_compute, gns3_image, gns3_project, gns3_template, gns3_version` (seen 2026-10-15; `gns3_image` added in both lists).
 
 Tests: none (the schema listing is not asserted in Go; `TestExamples` loads every resource type)
 
@@ -276,7 +276,7 @@ $g.Nodes | Group-Object Kind | Select-Object Count, Name
 Remove-Item -Recurse -Force $d
 ```
 
-Expect: `Nodes: 77`, `Edges: 76`, grouped as 68 Attribute, 1 Block, 4 DataSource, 1 Provider, 3 Resource (seen 2026-10-07 against TerraformGraph 0.14.0). No GNS3 server is needed. `Get-TerraformProviderSchema -Path` never runs `terraform init`, which would fail under a dev override.
+Expect: `Nodes: 93`, `Edges: 92`, grouped as 82 Attribute, 1 Block, 5 DataSource, 1 Provider, 4 Resource (seen 2026-10-15 with the `gns3_image` resource and data source; before them it was 77 nodes and 76 edges, seen 2026-10-07 against TerraformGraph 0.14.0). No GNS3 server is needed. `Get-TerraformProviderSchema -Path` never runs `terraform init`, which would fail under a dev override.
 
 Tests: none
 
@@ -302,6 +302,71 @@ Set-Location 'C:\__Code\terraform-provider-gns3'
 Invoke-Build TestAcc -AutoStart
 ```
 
-Expect: eight `--- PASS: TestAcc…` lines (`TestAccComputeDataSource`, `TestAccLinkResource`, `TestAccNodeResource`, `TestAccProjectDataSource`, `TestAccProjectResource`, `TestAccExamples` with its three subtests, `TestAccTemplateDataSource`, `TestAccVersionDataSource`), then `ok  github.com/JerryBalmer1/terraform-provider-gns3/internal/provider` and `Acceptance tests passed. Log: …\acc-run-<timestamp>.log` (seen 2026-10-07 against GNS3 2.2.61; the test binary took 26 to 31 s).
+Expect: eleven `--- PASS: TestAcc…` lines (`TestAccComputeDataSource`, `TestAccImageDataSource`, `TestAccImageResource`, `TestAccImageResourceSourceURL`, `TestAccLinkResource`, `TestAccNodeResource`, `TestAccProjectDataSource`, `TestAccProjectResource`, `TestAccExamples`, `TestAccTemplateDataSource`, `TestAccVersionDataSource`). `TestAccExamples` passes `gns3_link`, `gns3_node` and `gns3_project`, and skips `gns3_image` with "example not applied: downloads a ~612 MiB VyOS ISO …". Then `ok  github.com/JerryBalmer1/terraform-provider-gns3/internal/provider` and `Acceptance tests passed. Log: …\acc-run-<timestamp>.log` (seen 2026-10-15 against GNS3 2.2.61; the test binary took 33 s). The three image tests leave `tf-acc-image*.img` files in the server's QEMU images folder, because GNS3 2.2 cannot delete images. With `-AutoStart` that folder is `$env:TEMP\gns3\data\images\QEMU`.
 
 Tests: every TestAcc* test
+### 1.10 Images on a compute
+
+Lists the qemu, dynamips and iou images on the local compute, and the Docker images its daemon has, through the controller API (`Invoke-Build Gns3Images`). Downloads and uploads nothing.
+
+```powershell
+Set-Location 'C:\__Code\terraform-provider-gns3'
+Invoke-Build Gns3Images
+```
+
+Expect: `iou: HTTP 404, GET /iou/images not found (this compute has no iou support, or the compute does not exist)` in yellow, then `Images on compute 'local' at http://127.0.0.1:3080:` and a table with the columns `Emulator Filename SizeMB MD5 Path`. On a fresh 2.2.61 server the table has 16 qemu rows: `OVMF_CODE.fd`, `OVMF_CODE_4M.fd`, `OVMF_VARS.fd`, `OVMF_VARS_4M.fd` and `empty8G.qcow2` … `empty1T.qcow2`. `empty8G.qcow2` has MD5 `bfd65172dea027c3fc2eb5dfa3a7c2b9`. Files uploaded earlier, such as `tf-acc-image*.img`, add rows. There are no dynamips rows. The last line is `docker: HTTP 404, GET /docker/images not found …`, because a Windows compute has no IOU or Docker (seen 2026-10-15 against GNS3 2.2.61 on Windows, started by `Gns3Start`). On a GNS3 VM compute (`-ComputeId vm`), iou images would be table rows and docker would print a list of `repo:tag` names (not yet seen: needs a GNS3 VM).
+
+Tests: "TestListImages", "TestListImagesEmpty", "TestListDockerImages" (client fixtures; the task itself is not tested in Go)
+
+### 1.11 gns3_image upload, data source, destroy
+
+Uploads a small generated file with `gns3_image`, reads it back with the `gns3_image` data source, re-plans, destroys, and shows that the file is still on the compute (GNS3 2.2 cannot delete images).
+
+```powershell
+Set-Location 'C:\__Code\terraform-provider-gns3'
+go install .
+$bin = go env GOBIN; if (-not $bin) { $bin = Join-Path (go env GOPATH) 'bin' }
+$env:TF_CLI_CONFIG_FILE = Join-Path $env:TEMP 'gns3-dev.tfrc'
+@"
+provider_installation {
+  dev_overrides {
+    "JerryBalmer1/gns3" = "$($bin -replace '\\', '/')"
+  }
+  direct {}
+}
+"@ | Set-Content -Path $env:TF_CLI_CONFIG_FILE -Encoding ascii
+$d = Join-Path $env:TEMP 'gns3-check-1.11'; New-Item -ItemType Directory -Force $d | Out-Null
+Copy-Item .\examples\provider\provider.tf $d
+$name = "tf-check-$(Get-Date -Format 'yyyyMMddHHmmss').img"
+$src = Join-Path $d 'image.img'
+Set-Content -LiteralPath $src -Value "manual check image $name" -NoNewline -Encoding ascii
+"md5 of the source: $((Get-FileHash $src -Algorithm MD5).Hash.ToLower())"
+@"
+resource "gns3_image" "check" {
+  emulator    = "qemu"
+  filename    = "$name"
+  source_path = "$($src -replace '\\', '/')"
+  md5sum      = filemd5("$($src -replace '\\', '/')")
+}
+
+data "gns3_image" "check" {
+  emulator = "qemu"
+  filename = gns3_image.check.filename
+}
+
+output "listed" {
+  value = "`${data.gns3_image.check.path} `${data.gns3_image.check.filesize} `${data.gns3_image.check.md5sum}"
+}
+"@ | Set-Content -Path (Join-Path $d 'main.tf') -Encoding ascii
+Push-Location $d
+terraform apply -auto-approve
+terraform plan
+terraform destroy -auto-approve
+Pop-Location; Remove-Item -Recurse -Force $d
+$gns3 = "http://$(if ($env:GNS3_HOST) { $env:GNS3_HOST } else { '127.0.0.1' }):$(if ($env:GNS3_PORT) { $env:GNS3_PORT } else { 3080 })"
+"still on the compute after destroy: " + [bool]((Invoke-RestMethod "$gns3/v2/computes/local/qemu/images") | ForEach-Object { $_ } | Where-Object filename -eq $name)
+```
+
+Expect: `md5 of the source: <md5>`. Apply plans `gns3_image.check` with `md5sum` already set to that MD5 and `path` and `filesize` known after apply. It ends `Apply complete! Resources: 1 added, 0 changed, 0 destroyed.` with `listed = "tf-check-<timestamp>.img 46 <md5>"`. `terraform plan` prints `No changes.` Destroy prints the warning `GNS3 image left on the compute` ("GNS3 2.2 has no API to delete images, so \"tf-check-<timestamp>.img\" stays in the qemu images folder on compute \"local\" … It was removed from Terraform state only.") and ends `Destroy complete! Resources: 1 destroyed.` The last line is `still on the compute after destroy: True`. Delete the file from the compute's QEMU images folder by hand if needed (seen 2026-10-15 against GNS3 2.2.61).
+
+Tests: "TestImageResource", "TestImageDataSource", "TestAccImageResource", "TestAccImageDataSource"

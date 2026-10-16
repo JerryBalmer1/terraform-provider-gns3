@@ -210,6 +210,20 @@ func exampleDirs(t *testing.T) []string {
 	return dirs
 }
 
+// examplesNotApplied are examples TestExamples and TestAccExamples skip, with
+// the test that runs the same steps instead.
+var examplesNotApplied = map[string]string{
+	"gns3_image": "downloads a ~612 MiB VyOS ISO and needs a local CHR image; " +
+		"TestImageResource and TestImageResourceSourceURL run the same create, re-plan and destroy with generated files",
+}
+
+func skipUnappliedExample(t *testing.T, name string) {
+	t.Helper()
+	if why, ok := examplesNotApplied[name]; ok {
+		t.Skip("example not applied: " + why)
+	}
+}
+
 // examplesTestCase applies one example and requires an empty plan afterwards.
 // resource.Test also runs its own post-apply plan and fails on drift.
 func examplesTestCase(env testEnv, file string) resource.TestCase {
@@ -232,6 +246,7 @@ func examplesTestCase(env testEnv, file string) resource.TestCase {
 func TestExamples(t *testing.T) {
 	for _, file := range exampleDirs(t) {
 		t.Run(filepath.Base(filepath.Dir(file)), func(t *testing.T) {
+			skipUnappliedExample(t, filepath.Base(filepath.Dir(file)))
 			resource.UnitTest(t, examplesTestCase(unitEnv(t), file))
 		})
 	}
@@ -240,6 +255,7 @@ func TestExamples(t *testing.T) {
 func TestAccExamples(t *testing.T) {
 	for _, file := range exampleDirs(t) {
 		t.Run(filepath.Base(filepath.Dir(file)), func(t *testing.T) {
+			skipUnappliedExample(t, filepath.Base(filepath.Dir(file)))
 			resource.Test(t, examplesTestCase(accEnv(t), file))
 		})
 	}

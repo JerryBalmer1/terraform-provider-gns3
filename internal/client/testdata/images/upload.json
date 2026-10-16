@@ -1,0 +1,14 @@
+{
+  "_header": "recorded from GNS3 2.2.61 on 2026-10-15",
+  "_source": "https://gns3-server.readthedocs.io/en/stable/api/v2/controller/compute/sidemulatoraction.html",
+  "_notes": "Upload goes through the controller's forward route to POST /v2/compute/qemu/images/{filename} (https://gns3-server.readthedocs.io/en/stable/api/v2/compute/qemu/qemuimagesfilename.html, documented as 204). Through the controller 2.2.61 answers 200 with the body {}. An existing file of the same name is overwritten without error.",
+  "request": {
+    "method": "POST",
+    "path": "/v2/computes/local/qemu/images/tf-fixture.img",
+    "text": "terraform-provider-gns3 fixture image"
+  },
+  "response": {
+    "status": 200,
+    "body": {}
+  }
+}

@@ -60,7 +60,7 @@ func (p *gns3Provider) Metadata(_ context.Context, _ provider.MetadataRequest, r
 
 func (p *gns3Provider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Manages projects, nodes and links on a GNS3 server through its REST API. " +
+		MarkdownDescription: "Manages projects, nodes, links and emulator images on a GNS3 server through its REST API. " +
 			"This release talks to GNS3 server 2.2.x over the v2 API (`/v2/...`). " +
 			"Each argument falls back to its environment variable, then to its default.",
 		Attributes: map[string]schema.Attribute{
@@ -203,6 +203,7 @@ func (p *gns3Provider) Resources(_ context.Context) []func() resource.Resource {
 		NewProjectResource,
 		NewNodeResource,
 		NewLinkResource,
+		NewImageResource,
 	}
 }
 
@@ -212,6 +213,7 @@ func (p *gns3Provider) DataSources(_ context.Context) []func() datasource.DataSo
 		NewComputeDataSource,
 		NewProjectDataSource,
 		NewVersionDataSource,
+		NewImageDataSource,
 	}
 }
 

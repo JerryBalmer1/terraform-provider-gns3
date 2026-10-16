@@ -1,0 +1,116 @@
+{
+  "_header": "recorded from GNS3 2.2.61 on 2026-10-15",
+  "_source": "https://gns3-server.readthedocs.io/en/stable/api/v2/controller/compute/sidemulatorimages.html",
+  "_notes": "The docs have no sample. Recorded on a server started by Invoke-Build Gns3Start after uploading tf-fixture.img (fixture upload.json); the other 16 entries are the OVMF firmware and empty*.qcow2 disks that 2.2.61 places in the QEMU images folder itself.",
+  "request": {
+    "method": "GET",
+    "path": "/v2/computes/local/qemu/images"
+  },
+  "response": {
+    "status": 200,
+    "body": [
+      {
+        "filename": "OVMF_CODE.fd",
+        "filesize": 3653632,
+        "md5sum": "0ec8223c605cdf141f4f11f8bafe569f",
+        "path": "OVMF_CODE.fd"
+      },
+      {
+        "filename": "OVMF_CODE_4M.fd",
+        "filesize": 3653632,
+        "md5sum": "c846a931700c9390373e830209123a4a",
+        "path": "OVMF_CODE_4M.fd"
+      },
+      {
+        "filename": "OVMF_VARS.fd",
+        "filesize": 540672,
+        "md5sum": "173134c7c1593bad9cd101dc10bef49b",
+        "path": "OVMF_VARS.fd"
+      },
+      {
+        "filename": "OVMF_VARS_4M.fd",
+        "filesize": 540672,
+        "md5sum": "173134c7c1593bad9cd101dc10bef49b",
+        "path": "OVMF_VARS_4M.fd"
+      },
+      {
+        "filename": "empty100G.qcow2",
+        "filesize": 198208,
+        "md5sum": "f2b787633398c9b4e880b60fbc61b58d",
+        "path": "empty100G.qcow2"
+      },
+      {
+        "filename": "empty10G.qcow2",
+        "filesize": 196768,
+        "md5sum": "1d4589798b8a63a6afa7150492ca3193",
+        "path": "empty10G.qcow2"
+      },
+      {
+        "filename": "empty150G.qcow2",
+        "filesize": 199008,
+        "md5sum": "7db590ad39f84fdfc91516d162af26f6",
+        "path": "empty150G.qcow2"
+      },
+      {
+        "filename": "empty1T.qcow2",
+        "filesize": 212992,
+        "md5sum": "34997a22f618827aaa62bcfd5b8ce2bb",
+        "path": "empty1T.qcow2"
+      },
+      {
+        "filename": "empty200G.qcow2",
+        "filesize": 199808,
+        "md5sum": "66b3250c06519a1e3f6f9bfb0a981bc6",
+        "path": "empty200G.qcow2"
+      },
+      {
+        "filename": "empty20G.qcow2",
+        "filesize": 196928,
+        "md5sum": "df9e4a1169c597117fd8999f0bc3de91",
+        "path": "empty20G.qcow2"
+      },
+      {
+        "filename": "empty250G.qcow2",
+        "filesize": 200608,
+        "md5sum": "7d7272f02edd189aafd81f9c29a35255",
+        "path": "empty250G.qcow2"
+      },
+      {
+        "filename": "empty30G.qcow2",
+        "filesize": 197088,
+        "md5sum": "82309b9ac02616ce7407733a92e4b839",
+        "path": "empty30G.qcow2"
+      },
+      {
+        "filename": "empty40G.qcow2",
+        "filesize": 197248,
+        "md5sum": "4a9e538aa1946a27d91a8d53a8dbc546",
+        "path": "empty40G.qcow2"
+      },
+      {
+        "filename": "empty500G.qcow2",
+        "filesize": 204608,
+        "md5sum": "658c825441b9b3080ba00f9eec002eaa",
+        "path": "empty500G.qcow2"
+      },
+      {
+        "filename": "empty50G.qcow2",
+        "filesize": 197408,
+        "md5sum": "9a17e67e685907fbc0c351689ab289b2",
+        "path": "empty50G.qcow2"
+      },
+      {
+        "filename": "empty8G.qcow2",
+        "filesize": 196736,
+        "md5sum": "bfd65172dea027c3fc2eb5dfa3a7c2b9",
+        "path": "empty8G.qcow2"
+      },
+      {
+        "filename": "tf-fixture.img",
+        "filesize": 37,
+        "md5sum": "98d43fc50eb1481391aeb0ffcd1a8f25",
+        "path": "tf-fixture.img"
+      }
+    ]
+  }
+}

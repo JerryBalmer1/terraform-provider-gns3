@@ -1,0 +1,16 @@
+{
+  "_header": "hand-written from docs, not recorded",
+  "_source": "https://gns3-server.readthedocs.io/en/stable/api/v2/compute/docker/dockerimages.html",
+  "_notes": "The docs page has no sample. The shape, a list of {\"image\": \"<repo:tag>\"} sorted by tag, is from list_images in gns3server/compute/docker/__init__.py on the 2.2 branch. It goes through the controller's forward route (https://gns3-server.readthedocs.io/en/stable/api/v2/controller/compute/sidemulatoraction.html). Not recorded: the Windows compute has no Docker and answers 404 \"GET /docker/images not found\".",
+  "request": {
+    "method": "GET",
+    "path": "/v2/computes/vm/docker/images"
+  },
+  "response": {
+    "status": 200,
+    "body": [
+      {"image": "alpine:latest"},
+      {"image": "frrouting/frr:v8.4.0"}
+    ]
+  }
+}

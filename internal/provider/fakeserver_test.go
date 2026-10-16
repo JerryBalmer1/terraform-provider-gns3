@@ -1,13 +1,18 @@
 package provider
 
 import (
+	"bytes"
+	"crypto/md5"
 	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -27,6 +32,8 @@ type fakeGNS3 struct {
 	nodes    map[string]map[string]any    // node_id -> node
 	links    map[string]map[string]any    // link_id -> link
 	files    map[string]map[string]string // node_id -> path -> content
+	images   map[string]map[string][]byte // emulator -> filename -> content (compute local)
+	uploads  int
 	console  int64
 
 	// lockedDeletes is how many project DELETEs still fail with the 409 a
@@ -54,6 +61,7 @@ func newFakeGNS3(t *testing.T) *fakeGNS3 {
 	f := &fakeGNS3{
 		t: t, projects: map[string]map[string]any{}, nodes: map[string]map[string]any{},
 		links: map[string]map[string]any{}, files: map[string]map[string]string{}, console: 5000,
+		images: map[string]map[string][]byte{"qemu": {}, "dynamips": {}},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v2/version", func(w http.ResponseWriter, _ *http.Request) {
@@ -67,6 +75,13 @@ func newFakeGNS3(t *testing.T) *fakeGNS3 {
 		}
 		reply(w, 200, fakeCompute)
 	})
+	mux.HandleFunc("GET /v2/computes/{id}/{emulator}/images", f.withImages(f.listImages))
+	mux.HandleFunc("POST /v2/computes/{id}/{emulator}/images/{filename...}", f.withImages(func(w http.ResponseWriter, r *http.Request, imgs map[string][]byte) {
+		body, _ := io.ReadAll(r.Body)
+		imgs[r.PathValue("filename")] = body
+		f.uploads++
+		reply(w, 200, map[string]any{})
+	}))
 	mux.HandleFunc("GET /v2/templates", func(w http.ResponseWriter, _ *http.Request) { reply(w, 200, fakeTemplates) })
 	mux.HandleFunc("GET /v2/templates/{id}", func(w http.ResponseWriter, r *http.Request) {
 		if tpl := findTemplate(r.PathValue("id")); tpl != nil {
@@ -513,6 +528,70 @@ func (f *fakeGNS3) writeFile(nodeID, path, content string) {
 	f.files[nodeID][path] = content
 }
 
+// withImages resolves the compute and emulator the way 2.2.61 on Windows
+// does: only "local" exists, and it serves qemu and dynamips images but has
+// no IOU or Docker (404 "GET /iou/images not found", docs/api-drift.md).
+func (f *fakeGNS3) withImages(h func(http.ResponseWriter, *http.Request, map[string][]byte)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.PathValue("id") != "local" {
+			fail(w, 404, "Compute ID %s doesn't exist", r.PathValue("id"))
+			return
+		}
+		imgs, ok := f.images[r.PathValue("emulator")]
+		if !ok {
+			rest := strings.TrimPrefix(r.URL.Path, "/v2/computes/local")
+			fail(w, 404, "%s %s not found", r.Method, rest)
+			return
+		}
+		h(w, r, imgs)
+	}
+}
+
+// listImages lists the top-level files the way list_images in
+// gns3server/utils/images.py (2.2 branch) does: files under 7 bytes are left
+// out, dynamips keeps only 32-bit big-endian ELF files and qemu drops ELF files.
+func (f *fakeGNS3) listImages(w http.ResponseWriter, r *http.Request, imgs map[string][]byte) {
+	out := []any{}
+	for _, name := range slices.Sorted(maps.Keys(imgs)) {
+		content := imgs[name]
+		if len(content) < 7 {
+			continue
+		}
+		isELF := bytes.HasPrefix(content, elfMagic)
+		if r.PathValue("emulator") == "dynamips" && !bytes.HasPrefix(content, dynamipsELF) ||
+			r.PathValue("emulator") == "qemu" && isELF {
+			continue
+		}
+		sum := md5.Sum(content)
+		out = append(out, map[string]any{
+			"filename": name, "path": name, "md5sum": hex.EncodeToString(sum[:]), "filesize": len(content),
+		})
+	}
+	reply(w, 200, out)
+}
+
+// putImage places a file on the local compute without an upload, as a file
+// copied there by hand would be.
+func (f *fakeGNS3) putImage(emulator, filename string, content []byte) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.images[emulator][filename] = content
+}
+
+// removeImage deletes a file from the local compute behind the provider's back.
+func (f *fakeGNS3) removeImage(emulator, filename string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.images[emulator], filename)
+}
+
+// imageUploads is how many image uploads the fake has received.
+func (f *fakeGNS3) imageUploads() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.uploads
+}
+
 // lockProjectDeletes makes the next n project DELETEs fail as a locked file would.
 func (f *fakeGNS3) lockProjectDeletes(n int) {
 	f.mu.Lock()
@@ -533,3 +612,10 @@ func (f *fakeGNS3) closeProject(id string) {
 	defer f.mu.Unlock()
 	f.projects[id]["status"] = "closed"
 }
+
+// elfMagic starts every ELF file; dynamipsELF is the 32-bit big-endian ELF
+// header list_images requires for dynamips (gns3server/utils/images.py, 2.2).
+var (
+	elfMagic    = []byte{0x7f, 'E', 'L', 'F'}
+	dynamipsELF = []byte{0x7f, 'E', 'L', 'F', 1, 2, 1}
+)
