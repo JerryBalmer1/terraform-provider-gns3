@@ -19,7 +19,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"github.com/JerryBalmer1/terraform-provider-gns3/internal/client"
+	"github.com/JerryBalmer1/terraform-provider-gns3/pkg/gns3"
 )
 
 const (
@@ -33,13 +33,13 @@ var _ provider.Provider = (*gns3Provider)(nil)
 type gns3Provider struct {
 	version string
 	// newClient builds the API client; tests can replace it.
-	newClient func(client.Config) client.Client
+	newClient func(gns3.Config) gns3.Client
 }
 
 // New returns a provider factory for providerserver.
 func New(version string) func() provider.Provider {
 	return func() provider.Provider {
-		return &gns3Provider{version: version, newClient: client.NewV2}
+		return &gns3Provider{version: version, newClient: gns3.NewV2}
 	}
 }
 
@@ -102,7 +102,7 @@ func (p *gns3Provider) Schema(_ context.Context, _ provider.SchemaRequest, resp 
 
 // resolveConfig applies config value, then environment variable, then
 // default, for every provider argument. Unknown values are errors.
-func resolveConfig(m providerModel, getenv func(string) string, diags *diag.Diagnostics) client.Config {
+func resolveConfig(m providerModel, getenv func(string) string, diags *diag.Diagnostics) gns3.Config {
 	unknown := func(attr, env string) {
 		diags.AddAttributeError(path.Root(attr), "Unknown GNS3 provider argument",
 			fmt.Sprintf("%s is not known until apply. Set it to a literal or use the %s environment variable.", attr, env))
@@ -123,7 +123,7 @@ func resolveConfig(m providerModel, getenv func(string) string, diags *diag.Diag
 		return def
 	}
 
-	cfg := client.Config{
+	cfg := gns3.Config{
 		Host:     str(m.Host, "host", "GNS3_HOST", defaultHost),
 		Scheme:   str(m.Scheme, "scheme", "", defaultScheme),
 		Username: str(m.Username, "username", "GNS3_USERNAME", ""),
@@ -219,13 +219,13 @@ func (p *gns3Provider) DataSources(_ context.Context) []func() datasource.DataSo
 
 // clientFrom extracts the client handed over by Configure. data is nil
 // before Configure runs (validation); callers then return without error.
-func clientFrom(data any, diags *diag.Diagnostics) client.Client {
+func clientFrom(data any, diags *diag.Diagnostics) gns3.Client {
 	if data == nil {
 		return nil
 	}
-	c, ok := data.(client.Client)
+	c, ok := data.(gns3.Client)
 	if !ok {
-		diags.AddError("Unexpected provider data", fmt.Sprintf("expected client.Client, got %T. This is a provider bug.", data))
+		diags.AddError("Unexpected provider data", fmt.Sprintf("expected gns3.Client, got %T. This is a provider bug.", data))
 		return nil
 	}
 	return c
@@ -245,9 +245,9 @@ func splitImportID(id, want string, diags *diag.Diagnostics) (string, string, bo
 // project hides its nodes and links, so a 404 there is not proof the object
 // is gone; that case is an error instead of a silent removal from state.
 // It returns true when the object really is gone.
-func explainMissing(ctx context.Context, c client.Client, projectID, what string, diags *diag.Diagnostics) bool {
+func explainMissing(ctx context.Context, c gns3.Client, projectID, what string, diags *diag.Diagnostics) bool {
 	p, err := c.GetProject(ctx, projectID)
-	if client.IsNotFound(err) {
+	if gns3.IsNotFound(err) {
 		return true
 	}
 	if err != nil {

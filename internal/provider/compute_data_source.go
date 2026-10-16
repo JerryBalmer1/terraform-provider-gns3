@@ -10,7 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"github.com/JerryBalmer1/terraform-provider-gns3/internal/client"
+	"github.com/JerryBalmer1/terraform-provider-gns3/pkg/gns3"
 )
 
 var (
@@ -22,7 +22,7 @@ var (
 // NewComputeDataSource is the gns3_compute data source.
 func NewComputeDataSource() datasource.DataSource { return &computeDataSource{} }
 
-type computeDataSource struct{ client client.Client }
+type computeDataSource struct{ client gns3.Client }
 
 type computeDataSourceModel struct {
 	ComputeID types.String `tfsdk:"compute_id"`
@@ -73,7 +73,7 @@ func (d *computeDataSource) Read(ctx context.Context, req datasource.ReadRequest
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	var c *client.Compute
+	var c *gns3.Compute
 	if !m.ComputeID.IsNull() {
 		got, err := d.client.GetCompute(ctx, m.ComputeID.ValueString())
 		if err != nil {
@@ -88,7 +88,7 @@ func (d *computeDataSource) Read(ctx context.Context, req datasource.ReadRequest
 			return
 		}
 		name := m.Name.ValueString()
-		var matches []client.Compute
+		var matches []gns3.Compute
 		for _, x := range all {
 			if x.Name == name {
 				matches = append(matches, x)

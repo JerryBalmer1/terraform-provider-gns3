@@ -7,7 +7,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/datasource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"github.com/JerryBalmer1/terraform-provider-gns3/internal/client"
+	"github.com/JerryBalmer1/terraform-provider-gns3/pkg/gns3"
 )
 
 var (
@@ -18,7 +18,7 @@ var (
 // NewVersionDataSource is the gns3_version data source.
 func NewVersionDataSource() datasource.DataSource { return &versionDataSource{} }
 
-type versionDataSource struct{ client client.Client }
+type versionDataSource struct{ client gns3.Client }
 
 type versionDataSourceModel struct {
 	Version    types.String `tfsdk:"version"`

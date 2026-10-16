@@ -4,7 +4,7 @@ A Terraform provider for [GNS3](https://www.gns3.com/): projects, nodes, links a
 
 ## GNS3 version
 
-Built against the **GNS3 server 2.2.52** controller API (REST v2, `/v2/...`), as documented at <https://gns3-server.readthedocs.io/en/stable/endpoints.html>. (`docs.gns3.com/apiv2` returned 404 when this was written; the readthedocs pages are the same reference.) Each client method in `internal/client/` cites its endpoint page.
+Built against the **GNS3 server 2.2.52** controller API (REST v2, `/v2/...`), as documented at <https://gns3-server.readthedocs.io/en/stable/endpoints.html>. (`docs.gns3.com/apiv2` returned 404 when this was written; the readthedocs pages are the same reference.) Each client method in `pkg/gns3/` cites its endpoint page.
 
 It has been run against a live **GNS3 2.2.61** server on Windows (2026-10-07): every acceptance test passes, `manual-check-list.md` section 1 has been seen, and the client fixtures are recorded from that server. Where 2.2.61 differs from the 2.2.52 docs, [docs/api-drift.md](docs/api-drift.md) lists the difference and which one the client follows.
 
@@ -189,9 +189,28 @@ To get the old behaviour back, delete the `dev_overrides` block (or restore `ter
 | `make docs` | `go run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs generate --provider-name gns3`, then `... validate --provider-name gns3` |
 | `make lint` | `go vet ./...`; `go run honnef.co/go/tools/cmd/staticcheck@v0.8.1 ./...`; `gofmt -l .` (must print nothing) |
 
+## Using the client without Terraform
+
+The REST client the provider uses is a public Go package:
+
+```go
+import "github.com/JerryBalmer1/terraform-provider-gns3/pkg/gns3"
+```
+
+```go
+c := gns3.NewV2(gns3.Config{Host: "127.0.0.1", Port: 3080})
+v, err := c.GetVersion(context.Background())
+if err != nil {
+	log.Fatal(err)
+}
+fmt.Println(v.Version)
+```
+
+`NewV2` talks to GNS3 server 2.2.x over REST v2 (`/v2/...`), with HTTP Basic auth when `Config.Username` is set. Every non-2xx response comes back as `*gns3.APIError`. The package is versioned with the provider and follows semantic versioning: breaking changes to its exported API come only with a new major version. The package documentation (`go doc github.com/JerryBalmer1/terraform-provider-gns3/pkg/gns3`) lists every method.
+
 ## Tests
 
-- **Client unit tests** (`internal/client/*_test.go`): each client method is replayed against `httptest` from a fixture in `internal/client/testdata/<area>/<name>.json`. The harness checks the method, the path and the JSON request body. Each fixture names its provenance in `_header` and its docs page in `_source`. Every fixture is recorded from a local Windows GNS3 2.2.61 server (2026-10-07; the image fixtures 2026-10-15) except `images/docker_list.json`, which is `hand-written from docs, not recorded` because a Windows compute has no Docker; `_notes` says how a recording was set up when that is not obvious. Node file fixtures carry `text` instead of `body` for their raw, non-JSON content.
+- **Client unit tests** (`pkg/gns3/*_test.go`): each client method is replayed against `httptest` from a fixture in `pkg/gns3/testdata/<area>/<name>.json`. The harness checks the method, the path and the JSON request body. Each fixture names its provenance in `_header` and its docs page in `_source`. Every fixture is recorded from a local Windows GNS3 2.2.61 server (2026-10-07; the image fixtures 2026-10-15) except `images/docker_list.json`, which is `hand-written from docs, not recorded` because a Windows compute has no Docker; `_notes` says how a recording was set up when that is not obvious. Node file fixtures carry `text` instead of `body` for their raw, non-JSON content.
 - **Provider unit tests** (`internal/provider/*_test.go`, `Test*` without `Acc`): the same create, update, import, replace and destroy steps as the acceptance tests, run with `resource.UnitTest` against the in-memory fake in `fakeserver_test.go`. They drive the real Terraform CLI on `PATH`. The `TestExamples` test applies every `examples/resources/*/resource.tf` and requires an empty plan afterwards.
 - **Acceptance tests** (`TestAcc*`, run only with `TF_ACC=1`): the same steps against the live server in `GNS3_HOST`/`GNS3_PORT`/... . They create projects named `tf-acc-*`, plus `tf-example-project`, `tf-example-node` and `tf-example-link` from the examples, and destroy them at the end. The image tests upload small generated files named `tf-acc-image*.img` to the qemu images folder, and those stay there: GNS3 2.2 cannot delete images. `Invoke-Build TestAcc -AutoStart` keeps them in its own `$env:TEMP\gns3\data\images`. `TestAccExamples` skips the `gns3_image` example (a 612 MiB download); the image tests cover it. `TestAccExamples` is the idempotency test: a fresh apply of each example must leave an empty plan.
 
@@ -203,7 +222,7 @@ To get the old behaviour back, delete the `dev_overrides` block (or restore `ter
 | `gns3_drawing` | Not needed for topology. Drawings are SVG blobs with their own endpoints. |
 | Snapshots | Snapshot create and restore are actions rather than desired state, and restore rewrites every node. They need a design first. |
 | Project export/import | These are file transfers (`/export`, `/import` stream a .gns3project archive), not resources. |
-| GNS3 3.x / v3 API | The client interface (`client.Client`) is version-neutral and `token` is already in the provider schema. A v3 implementation (JWT auth, `/v3/...`) would be a second type behind the same interface. Nothing in 0.1.0 talks to v3. |
+| GNS3 3.x / v3 API | The client interface (`gns3.Client`) is version-neutral and `token` is already in the provider schema. A v3 implementation (JWT auth, `/v3/...`) would be a second type behind the same interface. Nothing in 0.1.0 talks to v3. |
 | Node start/stop as a separate resource | Run state is an action on a node, not one of its attributes. `start_on_create` covers the first start; a separate resource (or action) for start, stop and suspend comes later. |
 
 ## Release

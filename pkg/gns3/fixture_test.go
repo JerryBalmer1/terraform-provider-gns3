@@ -1,4 +1,4 @@
-package client
+package gns3
 
 import (
 	"encoding/json"

@@ -1,15 +1,4 @@
-// Package client is a hand-written REST client for the GNS3 controller API.
-//
-// Client is the version-neutral interface the provider uses. NewV2 returns the
-// implementation for GNS3 server 2.2.x (REST /v2/..., HTTP Basic auth). A GNS3
-// 3.x implementation (/v3/..., JWT bearer token) is meant to be a second type
-// satisfying the same interface, not a change to this one.
-//
-// Endpoint reference: GNS3 server 2.2.52 controller API,
-// https://gns3-server.readthedocs.io/en/stable/endpoints.html
-// (docs.gns3.com/apiv2 returned 404 when this client was written; the
-// readthedocs pages are the same API reference). Each method cites its page.
-package client
+package gns3
 
 import (
 	"bytes"

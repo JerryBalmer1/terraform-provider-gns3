@@ -16,7 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"github.com/JerryBalmer1/terraform-provider-gns3/internal/client"
+	"github.com/JerryBalmer1/terraform-provider-gns3/pkg/gns3"
 )
 
 var (
@@ -28,7 +28,7 @@ var (
 // NewLinkResource is the gns3_link resource.
 func NewLinkResource() resource.Resource { return &linkResource{} }
 
-type linkResource struct{ client client.Client }
+type linkResource struct{ client gns3.Client }
 
 type linkResourceModel struct {
 	ProjectID types.String         `tfsdk:"project_id"`
@@ -109,16 +109,16 @@ func (r *linkResource) Configure(_ context.Context, req resource.ConfigureReques
 	r.client = clientFrom(req.ProviderData, &resp.Diagnostics)
 }
 
-func endsToAPI(ends []linkEndModel) []client.LinkNode {
-	out := make([]client.LinkNode, len(ends))
+func endsToAPI(ends []linkEndModel) []gns3.LinkNode {
+	out := make([]gns3.LinkNode, len(ends))
 	for i, e := range ends {
-		out[i] = client.LinkNode{NodeID: e.NodeID.ValueString(), AdapterNumber: e.AdapterNumber.ValueInt64(), PortNumber: e.PortNumber.ValueInt64()}
+		out[i] = gns3.LinkNode{NodeID: e.NodeID.ValueString(), AdapterNumber: e.AdapterNumber.ValueInt64(), PortNumber: e.PortNumber.ValueInt64()}
 	}
 	return out
 }
 
 // sameEnds reports whether a and b hold the same ends in any order.
-func sameEnds(a []linkEndModel, b []client.LinkNode) bool {
+func sameEnds(a []linkEndModel, b []gns3.LinkNode) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -151,7 +151,7 @@ func filtersFromAPI(current jsontypes.Normalized, server json.RawMessage) jsonty
 	return jsontypes.NewNormalizedValue(string(server))
 }
 
-func (m *linkResourceModel) fromAPI(l *client.Link) {
+func (m *linkResourceModel) fromAPI(l *gns3.Link) {
 	m.ProjectID = types.StringValue(l.ProjectID)
 	m.LinkID = types.StringValue(l.LinkID)
 	m.LinkType = types.StringValue(l.LinkType)
@@ -186,7 +186,7 @@ func (r *linkResource) Create(ctx context.Context, req resource.CreateRequest, r
 	if plan.Suspend.ValueBool() {
 		suspend = knownBool(plan.Suspend)
 	}
-	l, err := r.client.CreateLink(ctx, plan.ProjectID.ValueString(), client.LinkCreateRequest{
+	l, err := r.client.CreateLink(ctx, plan.ProjectID.ValueString(), gns3.LinkCreateRequest{
 		Nodes: endsToAPI(plan.Nodes), Suspend: suspend, Filters: filtersToAPI(plan.Filters),
 	})
 	if err != nil {
@@ -207,7 +207,7 @@ func (r *linkResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	}
 	projectID, linkID := state.ProjectID.ValueString(), state.LinkID.ValueString()
 	l, err := r.client.GetLink(ctx, projectID, linkID)
-	if client.IsNotFound(err) {
+	if gns3.IsNotFound(err) {
 		if explainMissing(ctx, r.client, projectID, "link "+linkID, &resp.Diagnostics) {
 			resp.State.RemoveResource(ctx)
 		}
@@ -232,7 +232,7 @@ func (r *linkResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	if filters == nil && !state.Filters.IsNull() {
 		filters = json.RawMessage("{}") // removed from config: clear on the server
 	}
-	l, err := r.client.UpdateLink(ctx, state.ProjectID.ValueString(), state.LinkID.ValueString(), client.LinkUpdateRequest{
+	l, err := r.client.UpdateLink(ctx, state.ProjectID.ValueString(), state.LinkID.ValueString(), gns3.LinkUpdateRequest{
 		Suspend: knownBool(plan.Suspend), Filters: filters,
 	})
 	if err != nil {
@@ -252,7 +252,7 @@ func (r *linkResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 		return
 	}
 	err := r.client.DeleteLink(ctx, state.ProjectID.ValueString(), state.LinkID.ValueString())
-	if err != nil && !client.IsNotFound(err) {
+	if err != nil && !gns3.IsNotFound(err) {
 		resp.Diagnostics.AddError("Error deleting GNS3 link", err.Error())
 	}
 }

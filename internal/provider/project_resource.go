@@ -16,7 +16,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"github.com/JerryBalmer1/terraform-provider-gns3/internal/client"
+	"github.com/JerryBalmer1/terraform-provider-gns3/pkg/gns3"
 )
 
 var (
@@ -29,7 +29,7 @@ var (
 // NewProjectResource is the gns3_project resource.
 func NewProjectResource() resource.Resource { return &projectResource{} }
 
-type projectResource struct{ client client.Client }
+type projectResource struct{ client gns3.Client }
 
 type projectResourceModel struct {
 	ProjectID   types.String `tfsdk:"project_id"`
@@ -134,7 +134,7 @@ func (r *projectResource) Configure(_ context.Context, req resource.ConfigureReq
 	r.client = clientFrom(req.ProviderData, &resp.Diagnostics)
 }
 
-func (m *projectResourceModel) fromAPI(p *client.Project) {
+func (m *projectResourceModel) fromAPI(p *gns3.Project) {
 	m.ProjectID = types.StringValue(p.ProjectID)
 	m.Name = types.StringValue(p.Name)
 	m.Path = types.StringValue(p.Path)
@@ -155,7 +155,7 @@ func (r *projectResource) Create(ctx context.Context, req resource.CreateRequest
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	p, err := r.client.CreateProject(ctx, client.ProjectCreateRequest{
+	p, err := r.client.CreateProject(ctx, gns3.ProjectCreateRequest{
 		Name:        plan.Name.ValueString(),
 		Path:        knownString(plan.Path),
 		AutoStart:   knownBool(plan.AutoStart),
@@ -181,7 +181,7 @@ func (r *projectResource) Read(ctx context.Context, req resource.ReadRequest, re
 		return
 	}
 	p, err := r.client.GetProject(ctx, state.ProjectID.ValueString())
-	if client.IsNotFound(err) {
+	if gns3.IsNotFound(err) {
 		resp.State.RemoveResource(ctx)
 		return
 	}
@@ -200,7 +200,7 @@ func (r *projectResource) Update(ctx context.Context, req resource.UpdateRequest
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	p, err := r.client.UpdateProject(ctx, state.ProjectID.ValueString(), client.ProjectUpdateRequest{
+	p, err := r.client.UpdateProject(ctx, state.ProjectID.ValueString(), gns3.ProjectUpdateRequest{
 		Name:        knownString(plan.Name),
 		AutoStart:   knownBool(plan.AutoStart),
 		AutoOpen:    knownBool(plan.AutoOpen),
@@ -226,13 +226,13 @@ func (r *projectResource) Delete(ctx context.Context, req resource.DeleteRequest
 	}
 	id := state.ProjectID.ValueString()
 	if err := r.client.CloseProject(ctx, id); err != nil {
-		if client.IsNotFound(err) {
+		if gns3.IsNotFound(err) {
 			return // already gone
 		}
 		resp.Diagnostics.AddError("Error closing GNS3 project before delete", err.Error())
 		return
 	}
-	if err := deleteProjectRetrying(ctx, r.client, id); err != nil && !client.IsNotFound(err) {
+	if err := deleteProjectRetrying(ctx, r.client, id); err != nil && !gns3.IsNotFound(err) {
 		resp.Diagnostics.AddError("Error deleting GNS3 project", err.Error())
 	}
 }
@@ -245,12 +245,12 @@ var projectDeleteRetryWindow = 15 * time.Second
 // emulator process on Windows still holds a file in the project directory
 // open (DELETE .../nodes/{id} returns 204 before vpcs.exe has exited; seen on
 // 2.2.61 as "[WinError 32] ... vpcs.log", docs/api-drift.md).
-func deleteProjectRetrying(ctx context.Context, c client.Client, id string) error {
+func deleteProjectRetrying(ctx context.Context, c gns3.Client, id string) error {
 	deadline := time.Now().Add(projectDeleteRetryWindow)
 	wait := 250 * time.Millisecond
 	for {
 		err := c.DeleteProject(ctx, id)
-		var apiErr *client.APIError
+		var apiErr *gns3.APIError
 		if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusConflict ||
 			!strings.Contains(apiErr.Message, "Cannot delete project directory") || time.Now().Add(wait).After(deadline) {
 			return err

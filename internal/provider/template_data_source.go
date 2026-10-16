@@ -10,7 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"github.com/JerryBalmer1/terraform-provider-gns3/internal/client"
+	"github.com/JerryBalmer1/terraform-provider-gns3/pkg/gns3"
 )
 
 var (
@@ -22,7 +22,7 @@ var (
 // NewTemplateDataSource is the gns3_template data source.
 func NewTemplateDataSource() datasource.DataSource { return &templateDataSource{} }
 
-type templateDataSource struct{ client client.Client }
+type templateDataSource struct{ client gns3.Client }
 
 type templateDataSourceModel struct {
 	TemplateID   types.String `tfsdk:"template_id"`
@@ -76,7 +76,7 @@ func (d *templateDataSource) Read(ctx context.Context, req datasource.ReadReques
 	if resp.Diagnostics.HasError() {
 		return
 	}
-	var tpl *client.Template
+	var tpl *gns3.Template
 	if !m.TemplateID.IsNull() {
 		t, err := d.client.GetTemplate(ctx, m.TemplateID.ValueString())
 		if err != nil {
@@ -91,7 +91,7 @@ func (d *templateDataSource) Read(ctx context.Context, req datasource.ReadReques
 			return
 		}
 		name := m.Name.ValueString()
-		var matches []client.Template
+		var matches []gns3.Template
 		for _, t := range all {
 			if t.Name == name {
 				matches = append(matches, t)

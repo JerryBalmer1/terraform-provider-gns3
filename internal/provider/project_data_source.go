@@ -9,7 +9,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"github.com/JerryBalmer1/terraform-provider-gns3/internal/client"
+	"github.com/JerryBalmer1/terraform-provider-gns3/pkg/gns3"
 )
 
 var (
@@ -20,7 +20,7 @@ var (
 // NewProjectDataSource is the gns3_project data source.
 func NewProjectDataSource() datasource.DataSource { return &projectDataSource{} }
 
-type projectDataSource struct{ client client.Client }
+type projectDataSource struct{ client gns3.Client }
 
 type projectDataSourceModel struct {
 	Name      types.String `tfsdk:"name"`
@@ -63,7 +63,7 @@ func (d *projectDataSource) Read(ctx context.Context, req datasource.ReadRequest
 		return
 	}
 	name := m.Name.ValueString()
-	var found *client.Project
+	var found *gns3.Project
 	for i := range all {
 		if all[i].Name == name {
 			found = &all[i]

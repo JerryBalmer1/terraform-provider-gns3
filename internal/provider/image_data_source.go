@@ -11,7 +11,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"github.com/JerryBalmer1/terraform-provider-gns3/internal/client"
+	"github.com/JerryBalmer1/terraform-provider-gns3/pkg/gns3"
 )
 
 var (
@@ -28,7 +28,7 @@ var imageEmulators = []string{"qemu", "iou", "dynamips"}
 // NewImageDataSource is the gns3_image data source.
 func NewImageDataSource() datasource.DataSource { return &imageDataSource{} }
 
-type imageDataSource struct{ client client.Client }
+type imageDataSource struct{ client gns3.Client }
 
 type imageDataSourceModel struct {
 	ComputeID types.String `tfsdk:"compute_id"`
@@ -118,13 +118,13 @@ func imagesEndpoint(computeID, emulator string) string {
 // gns3server/utils/images.py, 2.2 branch). topLevel also requires the file to
 // sit at the top of the emulator's images folder, where an upload puts it:
 // its path is then the bare file name.
-func findImage(images []client.Image, filename string, topLevel bool) (client.Image, bool) {
+func findImage(images []gns3.Image, filename string, topLevel bool) (gns3.Image, bool) {
 	for _, img := range images {
 		if img.Filename == filename && (!topLevel || img.Path == filename) {
 			return img, true
 		}
 	}
-	return client.Image{}, false
+	return gns3.Image{}, false
 }
 
 // listFilterHint names the files an image list leaves out

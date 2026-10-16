@@ -18,7 +18,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 
-	"github.com/JerryBalmer1/terraform-provider-gns3/internal/client"
+	"github.com/JerryBalmer1/terraform-provider-gns3/pkg/gns3"
 )
 
 var protoV6Factories = map[string]func() (tfprotov6.ProviderServer, error){
@@ -30,7 +30,7 @@ var protoV6Factories = map[string]func() (tfprotov6.ProviderServer, error){
 // Both run the same steps.
 type testEnv struct {
 	providerBlock string
-	client        client.Client
+	client        gns3.Client
 	fake          *fakeGNS3 // nil against a live server
 }
 
@@ -41,7 +41,7 @@ func unitEnv(t *testing.T) testEnv {
 	port, _ := strconv.ParseInt(u.Port(), 10, 64)
 	return testEnv{
 		providerBlock: f.providerBlock(),
-		client:        client.NewV2(client.Config{Scheme: "http", Host: u.Hostname(), Port: port}),
+		client:        gns3.NewV2(gns3.Config{Scheme: "http", Host: u.Hostname(), Port: port}),
 		fake:          f,
 	}
 }
@@ -53,7 +53,7 @@ func accEnv(t *testing.T) testEnv {
 	if diags.HasError() {
 		t.Fatalf("resolving GNS3_* environment: %v", diags)
 	}
-	return testEnv{client: client.NewV2(cfg)}
+	return testEnv{client: gns3.NewV2(cfg)}
 }
 
 func nullProviderModel() providerModel {
@@ -103,7 +103,7 @@ func (e testEnv) checkGone(resourceType string) resource.TestCheckFunc {
 			if err == nil {
 				return fmt.Errorf("%s %s still exists", resourceType, rs.Primary.Attributes)
 			}
-			if !client.IsNotFound(err) {
+			if !gns3.IsNotFound(err) {
 				return err
 			}
 		}
@@ -117,7 +117,7 @@ func TestResolveConfigDefaults(t *testing.T) {
 	if diags.HasError() {
 		t.Fatal(diags)
 	}
-	want := client.Config{Scheme: "http", Host: "127.0.0.1", Port: 3080}
+	want := gns3.Config{Scheme: "http", Host: "127.0.0.1", Port: 3080}
 	if cfg != want {
 		t.Fatalf("got %+v, want %+v", cfg, want)
 	}
@@ -133,7 +133,7 @@ func TestResolveConfigEnvironment(t *testing.T) {
 	if diags.HasError() {
 		t.Fatal(diags)
 	}
-	want := client.Config{Scheme: "http", Host: "gns3.lab", Port: 3443, Username: "admin", Password: "pw", Token: "jwt"}
+	want := gns3.Config{Scheme: "http", Host: "gns3.lab", Port: 3443, Username: "admin", Password: "pw", Token: "jwt"}
 	if cfg != want {
 		t.Fatalf("got %+v, want %+v", cfg, want)
 	}
@@ -150,7 +150,7 @@ func TestResolveConfigValueBeatsEnvironment(t *testing.T) {
 	if diags.HasError() {
 		t.Fatal(diags)
 	}
-	want := client.Config{Scheme: "https", Host: "10.0.0.5", Port: 8443, Username: "u", Password: "p", InsecureSkipVerify: true}
+	want := gns3.Config{Scheme: "https", Host: "10.0.0.5", Port: 8443, Username: "u", Password: "p", InsecureSkipVerify: true}
 	if cfg != want {
 		t.Fatalf("got %+v, want %+v", cfg, want)
 	}

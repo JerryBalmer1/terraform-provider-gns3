@@ -25,7 +25,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"github.com/JerryBalmer1/terraform-provider-gns3/internal/client"
+	"github.com/JerryBalmer1/terraform-provider-gns3/pkg/gns3"
 )
 
 var (
@@ -53,7 +53,7 @@ var nodeTypes = []string{
 // NewNodeResource is the gns3_node resource.
 func NewNodeResource() resource.Resource { return &nodeResource{} }
 
-type nodeResource struct{ client client.Client }
+type nodeResource struct{ client gns3.Client }
 
 type nodeResourceModel struct {
 	ProjectID     types.String         `tfsdk:"project_id"`
@@ -230,7 +230,7 @@ func (r *nodeResource) Configure(_ context.Context, req resource.ConfigureReques
 
 // fromAPI copies server values into m. properties is not touched; see
 // readProperties.
-func (m *nodeResourceModel) fromAPI(n *client.Node, diags *diag.Diagnostics) {
+func (m *nodeResourceModel) fromAPI(n *gns3.Node, diags *diag.Diagnostics) {
 	m.ProjectID = types.StringValue(n.ProjectID)
 	m.NodeID = types.StringValue(n.NodeID)
 	m.TemplateID = stringOrNull(n.TemplateID)
@@ -313,7 +313,7 @@ func splitProperties(nodeType string, props map[string]json.RawMessage, diags *d
 }
 
 // writeNodeFiles writes file-backed properties in path order.
-func writeNodeFiles(ctx context.Context, c client.Client, projectID, nodeID string, files map[string]string) error {
+func writeNodeFiles(ctx context.Context, c gns3.Client, projectID, nodeID string, files map[string]string) error {
 	for _, p := range slices.Sorted(maps.Keys(files)) {
 		if err := c.WriteNodeFile(ctx, projectID, nodeID, p, []byte(files[p])); err != nil {
 			return err
@@ -324,7 +324,7 @@ func writeNodeFiles(ctx context.Context, c client.Client, projectID, nodeID stri
 
 // serverProperties is n.Properties with each file-backed key that state
 // manages replaced by the file's content (dropped when the file is missing).
-func serverProperties(ctx context.Context, c client.Client, n *client.Node, state jsontypes.Normalized, diags *diag.Diagnostics) map[string]json.RawMessage {
+func serverProperties(ctx context.Context, c gns3.Client, n *gns3.Node, state jsontypes.Normalized, diags *diag.Diagnostics) map[string]json.RawMessage {
 	keys := decodeProperties(state, diags)
 	out := maps.Clone(n.Properties)
 	for k := range keys {
@@ -336,7 +336,7 @@ func serverProperties(ctx context.Context, c client.Client, n *client.Node, stat
 			out = map[string]json.RawMessage{}
 		}
 		content, err := c.ReadNodeFile(ctx, n.ProjectID, n.NodeID, file)
-		if client.IsNotFound(err) {
+		if gns3.IsNotFound(err) {
 			delete(out, k)
 			continue
 		}
@@ -383,11 +383,11 @@ func (r *nodeResource) Create(ctx context.Context, req resource.CreateRequest, r
 		computeID = *c
 	}
 
-	var n *client.Node
+	var n *gns3.Node
 	var err error
 	var files map[string]string
 	if !plan.TemplateID.IsNull() {
-		n, err = r.client.CreateNodeFromTemplate(ctx, projectID, plan.TemplateID.ValueString(), client.NodeFromTemplateRequest{
+		n, err = r.client.CreateNodeFromTemplate(ctx, projectID, plan.TemplateID.ValueString(), gns3.NodeFromTemplateRequest{
 			X: plan.X.ValueInt64(), Y: plan.Y.ValueInt64(), Name: knownString(plan.Name), ComputeID: &computeID,
 		})
 	} else {
@@ -396,7 +396,7 @@ func (r *nodeResource) Create(ctx context.Context, req resource.CreateRequest, r
 		if resp.Diagnostics.HasError() {
 			return
 		}
-		n, err = r.client.CreateNode(ctx, projectID, client.NodeCreateRequest{
+		n, err = r.client.CreateNode(ctx, projectID, gns3.NodeCreateRequest{
 			ComputeID: computeID, Name: plan.Name.ValueString(), NodeType: plan.NodeType.ValueString(),
 			ConsoleType: knownString(plan.ConsoleType), Symbol: knownString(plan.Symbol),
 			X: knownInt64(plan.X), Y: knownInt64(plan.Y), Z: knownInt64(plan.Z), Properties: props,
@@ -419,7 +419,7 @@ func (r *nodeResource) Create(ctx context.Context, req resource.CreateRequest, r
 	// The template endpoint takes only x, y, name and compute_id; apply the
 	// rest with a PUT when the configuration asks for something different.
 	if !plan.TemplateID.IsNull() && needsTemplateFollowUp(plan, n) {
-		if _, err := r.client.UpdateNode(ctx, projectID, nodeID, client.NodeUpdateRequest{
+		if _, err := r.client.UpdateNode(ctx, projectID, nodeID, gns3.NodeUpdateRequest{
 			ComputeID: n.ComputeID, Name: n.Name, NodeType: n.NodeType,
 			Z: knownInt64(plan.Z), Symbol: knownString(plan.Symbol), ConsoleType: knownString(plan.ConsoleType),
 		}); err != nil {
@@ -444,7 +444,7 @@ func (r *nodeResource) Create(ctx context.Context, req resource.CreateRequest, r
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 
-func needsTemplateFollowUp(plan nodeResourceModel, n *client.Node) bool {
+func needsTemplateFollowUp(plan nodeResourceModel, n *gns3.Node) bool {
 	if z := knownInt64(plan.Z); z != nil && *z != n.Z {
 		return true
 	}
@@ -465,7 +465,7 @@ func (r *nodeResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	}
 	projectID, nodeID := state.ProjectID.ValueString(), state.NodeID.ValueString()
 	n, err := r.client.GetNode(ctx, projectID, nodeID)
-	if client.IsNotFound(err) {
+	if gns3.IsNotFound(err) {
 		if explainMissing(ctx, r.client, projectID, "node "+nodeID, &resp.Diagnostics) {
 			resp.State.RemoveResource(ctx)
 		}
@@ -500,7 +500,7 @@ func (r *nodeResource) Update(ctx context.Context, req resource.UpdateRequest, r
 		if resp.Diagnostics.HasError() {
 			return
 		}
-		if _, err := r.client.UpdateNode(ctx, projectID, nodeID, client.NodeUpdateRequest{
+		if _, err := r.client.UpdateNode(ctx, projectID, nodeID, gns3.NodeUpdateRequest{
 			ComputeID: state.ComputeID.ValueString(), Name: plan.Name.ValueString(), NodeType: state.NodeType.ValueString(),
 			X: knownInt64(plan.X), Y: knownInt64(plan.Y), Z: knownInt64(plan.Z),
 			Symbol: knownString(plan.Symbol), ConsoleType: knownString(plan.ConsoleType), Properties: props,
@@ -529,7 +529,7 @@ func (r *nodeResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 		return
 	}
 	err := r.client.DeleteNode(ctx, state.ProjectID.ValueString(), state.NodeID.ValueString())
-	if err != nil && !client.IsNotFound(err) {
+	if err != nil && !gns3.IsNotFound(err) {
 		resp.Diagnostics.AddError("Error deleting GNS3 node", err.Error())
 	}
 }

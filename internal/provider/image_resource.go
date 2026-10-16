@@ -24,7 +24,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
-	"github.com/JerryBalmer1/terraform-provider-gns3/internal/client"
+	"github.com/JerryBalmer1/terraform-provider-gns3/pkg/gns3"
 )
 
 var (
@@ -38,7 +38,7 @@ var (
 // NewImageResource is the gns3_image resource.
 func NewImageResource() resource.Resource { return &imageResource{} }
 
-type imageResource struct{ client client.Client }
+type imageResource struct{ client gns3.Client }
 
 type imageResourceModel struct {
 	ComputeID  types.String `tfsdk:"compute_id"`
@@ -150,7 +150,7 @@ func (r *imageResource) Configure(_ context.Context, req resource.ConfigureReque
 	r.client = clientFrom(req.ProviderData, &resp.Diagnostics)
 }
 
-func (m *imageResourceModel) fromAPI(img client.Image) {
+func (m *imageResourceModel) fromAPI(img gns3.Image) {
 	m.Path = types.StringValue(img.Path)
 	m.MD5Sum = types.StringValue(img.MD5Sum)
 	m.Filesize = types.Int64Value(img.Filesize)
@@ -242,44 +242,44 @@ func sourceName(m imageResourceModel) string {
 // compute already has the file with the source's MD5 it returns that without
 // uploading; with another MD5 it refuses. Otherwise it uploads and returns the
 // image as the compute then lists it.
-func (r *imageResource) upload(ctx context.Context, m imageResourceModel, want *string, existing *client.Image) (client.Image, error) {
+func (r *imageResource) upload(ctx context.Context, m imageResourceModel, want *string, existing *gns3.Image) (gns3.Image, error) {
 	computeID, emulator, filename := m.ComputeID.ValueString(), m.Emulator.ValueString(), m.Filename.ValueString()
 	src, err := stageImage(ctx, m)
 	if err != nil {
-		return client.Image{}, err
+		return gns3.Image{}, err
 	}
 	defer src.Close()
 	if want != nil && src.md5 != *want {
-		return client.Image{}, fmt.Errorf("MD5 mismatch: %s has MD5 %s, md5sum is %s. Nothing was uploaded", sourceName(m), src.md5, *want)
+		return gns3.Image{}, fmt.Errorf("MD5 mismatch: %s has MD5 %s, md5sum is %s. Nothing was uploaded", sourceName(m), src.md5, *want)
 	}
 	if existing != nil {
 		if existing.MD5Sum == src.md5 {
 			return *existing, nil
 		}
-		return client.Image{}, fmt.Errorf("compute %q already has a %s image %q with MD5 %s, and %s has MD5 %s. "+
+		return gns3.Image{}, fmt.Errorf("compute %q already has a %s image %q with MD5 %s, and %s has MD5 %s. "+
 			"The provider does not overwrite a file it did not upload: import it (terraform import ... %s/%s/%s), "+
 			"choose another filename, or remove the file from the compute",
 			computeID, emulator, filename, existing.MD5Sum, sourceName(m), src.md5, computeID, emulator, filename)
 	}
 	if err := r.client.UploadImage(ctx, computeID, emulator, filename, src.file); err != nil {
-		return client.Image{}, err
+		return gns3.Image{}, err
 	}
 	return r.readBack(ctx, computeID, emulator, filename, src.md5)
 }
 
 // readBack lists the images after an upload and checks the server's MD5.
-func (r *imageResource) readBack(ctx context.Context, computeID, emulator, filename, md5sum string) (client.Image, error) {
+func (r *imageResource) readBack(ctx context.Context, computeID, emulator, filename, md5sum string) (gns3.Image, error) {
 	images, err := r.client.ListImages(ctx, computeID, emulator)
 	if err != nil {
-		return client.Image{}, fmt.Errorf("listing images after the upload: %w", err)
+		return gns3.Image{}, fmt.Errorf("listing images after the upload: %w", err)
 	}
 	img, ok := findImage(images, filename, true)
 	if !ok {
-		return client.Image{}, fmt.Errorf("the upload succeeded but compute %q does not list %q among its %s images (GET %s). %s",
+		return gns3.Image{}, fmt.Errorf("the upload succeeded but compute %q does not list %q among its %s images (GET %s). %s",
 			computeID, filename, emulator, imagesEndpoint(computeID, emulator), listFilterHint(emulator))
 	}
 	if img.MD5Sum != md5sum {
-		return client.Image{}, fmt.Errorf("after the upload compute %q reports MD5 %s for %q, but the uploaded file has MD5 %s",
+		return gns3.Image{}, fmt.Errorf("after the upload compute %q reports MD5 %s for %q, but the uploaded file has MD5 %s",
 			computeID, img.MD5Sum, filename, md5sum)
 	}
 	return img, nil
@@ -299,12 +299,12 @@ func (r *imageResource) Create(ctx context.Context, req resource.CreateRequest, 
 		resp.Diagnostics.AddError(fmt.Sprintf("Error listing %s images on GNS3 compute %q", emulator, computeID), err.Error())
 		return
 	}
-	var existing *client.Image
+	var existing *gns3.Image
 	if img, ok := findImage(images, filename, true); ok {
 		existing = &img
 	}
 
-	img := client.Image{}
+	img := gns3.Image{}
 	if existing != nil && want != nil && existing.MD5Sum == *want {
 		img = *existing // already there: adopt without reading the source
 	} else if img, err = r.upload(ctx, plan, want, existing); err != nil {

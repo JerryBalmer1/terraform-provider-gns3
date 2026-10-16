@@ -12,7 +12,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 
-	"github.com/JerryBalmer1/terraform-provider-gns3/internal/client"
+	"github.com/JerryBalmer1/terraform-provider-gns3/pkg/gns3"
 )
 
 // linkConfig links pc1 to `peer` (pc2 or pc3); extra is spliced into the link.
@@ -168,11 +168,11 @@ func TestSameEndsIgnoresOrder(t *testing.T) {
 		{NodeID: types.StringValue("a"), AdapterNumber: types.Int64Value(0), PortNumber: types.Int64Value(1)},
 		{NodeID: types.StringValue("b"), AdapterNumber: types.Int64Value(0), PortNumber: types.Int64Value(0)},
 	}
-	swapped := []client.LinkNode{{NodeID: "b"}, {NodeID: "a", PortNumber: 1}}
+	swapped := []gns3.LinkNode{{NodeID: "b"}, {NodeID: "a", PortNumber: 1}}
 	if !sameEnds(ends, swapped) {
 		t.Error("swapped ends reported different")
 	}
-	if sameEnds(ends, []client.LinkNode{{NodeID: "a", PortNumber: 1}, {NodeID: "c"}}) {
+	if sameEnds(ends, []gns3.LinkNode{{NodeID: "a", PortNumber: 1}, {NodeID: "c"}}) {
 		t.Error("different ends reported same")
 	}
 }
