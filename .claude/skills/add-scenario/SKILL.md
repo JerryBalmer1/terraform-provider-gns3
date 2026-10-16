@@ -12,12 +12,13 @@ When asked to add a scenario, or when a released behaviour has no scenario.
 
 1. Read the schema (`internal/provider/<name>_resource.go` or `_data_source.go`), its page under `docs/`, and the "Scenario tests" section of `CLAUDE.md`. Check `test/scenarios/README.md` so you don't duplicate an existing scenario.
 2. Create `test/scenarios/<name>/`:
-   - `scenario.json`: `{ "name": "<name>", "description": "<one sentence>", "requires": ["server"] }`, or `["server","image"]` to get `test/images/scenario-dummy.img`.
+   - `scenario.json`: `{ "name": "<name>", "description": "<one sentence>", "requires": ["server"] }`, or `["server","image"]` to get `test/images/scenario-dummy.img`. When the scenario has nodes with a console, add an optional `"inspect": [{ "node", "command", "expect" }]` array: the command to type in a node's console and the output to compare it with. `Gns3Range -Inspect` prints it and never runs it. Put in `expect` only output you have seen on a running node; otherwise ask.
    - `main.tf`: a real root module. `required_providers` uses `source = "JerryBalmer1/gns3"` and `version` = the **published** version the other scenarios pin. The provider block is empty. Resources are named `tf-scenario-<name>`, and every value `checks.ps1` needs is an `output`.
    - `checks.ps1`: `param([Parameter(Mandatory)] [string] $Server, [Parameter(Mandatory)] [hashtable] $Outputs)` and `$ErrorActionPreference = 'Stop'`. Call the v2 API with `Invoke-RestMethod`, unroll lists with `| ForEach-Object { $_ }`, cite each endpoint's docs URL in a comment, and throw a message naming the field, the expected value and the server's value on any mismatch.
    - `README.md`: H1 `# <name>`, then `Up: [Scenario tests](../README.md)` and `See also:` the sibling scenarios, then what it builds, "What checks.ps1 verifies" and "In the GNS3 GUI" (what Jerry sees while it is applied and after destroy).
 3. Add a row to `test/scenarios/README.md`, and a `See also:` link to the new scenario in each sibling README.
 4. `Invoke-Build Test-Docs`, then `Invoke-Build Gns3Range -Dev -Scenario <name>` (a build of this checkout) and `Invoke-Build Gns3Range -Scenario <name>` (the pinned Registry release; it passes only once the behaviour is released).
+5. If the scenario has an `inspect` array: `Invoke-Build Gns3Range -Scenario <name> -Inspect` (add `-Dev` before the release), run each command in the printed consoles and compare with `expect`, then run the printed `-Destroy` command. Never leave a scenario inspected at the end of a task: a default run refuses it as stale state.
 
 ## Stop and ask when
 

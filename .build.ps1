@@ -37,7 +37,16 @@ Param(
 
     # Gns3Range: screenshot each applied scenario in the GNS3 GUI. A stub for now.
     [switch]
-    $Capture
+    $Capture,
+
+    # Gns3Range -Scenario <name>: apply and check, skip destroy, start the nodes, open the project
+    # in gns3.exe and print what to do next. The server stays running.
+    [switch]
+    $Inspect,
+
+    # Gns3Range -Scenario <name>: destroy a scenario left up by -Inspect and clear its state.
+    [switch]
+    $Destroy
 )
 
 # InvokeBuild must already be installed (Install-Module InvokeBuild -Scope CurrentUser); this
@@ -344,15 +353,108 @@ function ConvertFrom-TerraformOutput {
     $outputs
 }
 
+function Get-ScenarioState {
+    # The resource addresses in a scenario's state, or none when it has no state file.
+    param([string] $Dir)
+    if (-not (Test-Path -LiteralPath (Join-Path $Dir 'terraform.tfstate'))) {
+        return @()
+    }
+    $left = @(terraform "-chdir=$Dir" state list 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ })
+    if ($LASTEXITCODE -ne 0) { throw "terraform state list failed with exit code ${LASTEXITCODE}: $($left -join '; ')" }
+    $left
+}
+
+function Get-ScenarioTeardownCommand {
+    # The command that destroys a scenario left up by -Inspect, with the switches that differ from
+    # the defaults, so the same provider build and server are used.
+    param([string] $Name, [switch] $Dev)
+    $command = "Invoke-Build Gns3Range -Scenario $Name -Destroy"
+    if ($Dev) { $command += ' -Dev' }
+    if ($Gns3Host -ne '127.0.0.1') { $command += " -Gns3Host $Gns3Host" }
+    if ($Gns3Port -ne 3080) { $command += " -Gns3Port $Gns3Port" }
+    $command
+}
+
+function Start-ScenarioNodes {
+    # Starts every node of the project and returns the nodes as the server reports them afterwards.
+    # POST /v2/projects/{project_id}/nodes/start: https://gns3-server.readthedocs.io/en/stable/api/v2/controller/node/projectsprojectidnodesstart.html
+    # GET /v2/projects/{project_id}/nodes: https://gns3-server.readthedocs.io/en/stable/api/v2/controller/node/projectsprojectidnodes.html
+    param([string] $Server, [string] $ProjectId)
+    $null = Invoke-RestMethod -Method Post -Uri "$Server/v2/projects/$ProjectId/nodes/start" -ContentType 'application/json' -Body '{}' -TimeoutSec 300 -ErrorAction Stop
+    $nodes = @(Invoke-RestMethod -Uri "$Server/v2/projects/$ProjectId/nodes" -TimeoutSec 30 -ErrorAction Stop | ForEach-Object { $_ })
+    $stopped = @($nodes | Where-Object status -ne 'started')
+    if ($stopped) {
+        throw "POST /v2/projects/$ProjectId/nodes/start returned, but these nodes are not started: $(@($stopped | ForEach-Object { "$($_.name) ($($_.status))" }) -join ', ')"
+    }
+    $nodes
+}
+
+function Open-ScenarioProject {
+    # Opens the project's .gns3 file in gns3.exe when GNS3 is installed here and the server is
+    # local; otherwise points at the web UI. Returns the line for the "what to do now" block.
+    # GET /v2/projects/{project_id}: https://gns3-server.readthedocs.io/en/stable/api/v2/controller/project/projectsprojectid.html
+    # The web UI: 2.2.61 redirects GET / to /static/web-ui/bundled.
+    param([string] $Server, [string] $ProjectId)
+    $project = Invoke-RestMethod -Uri "$Server/v2/projects/$ProjectId" -TimeoutSec 30 -ErrorAction Stop
+    $web = "$Server/static/web-ui/bundled"
+    $local = $Gns3Host -in '127.0.0.1', 'localhost', '::1'
+    $install = if ($IsWindows) { Get-Gns3Install } else { $null }
+    $gui = if ($install -and $install.Folder) { Join-Path $install.Folder 'gns3.exe' } else { $null }
+    if ($local -and $gui -and (Test-Path -LiteralPath $gui)) {
+        # A second gns3.exe opens a second window (seen on 2.2.61), so a running GUI is reused.
+        $running = @(Get-Process -Name gns3 -ErrorAction SilentlyContinue)
+        if ($running) {
+            return "gns3.exe is already running (PID $(@($running.Id) -join ', ')): use File > Open project > '$($project.name)', or the web UI: $web"
+        }
+        $file = Join-Path $project.path $project.filename
+        Start-Process -FilePath $gui -ArgumentList "`"$file`"" -ErrorAction Stop
+        return "gns3.exe opened $file. If it shows no project, use File > Open project > '$($project.name)', or the web UI: $web"
+    }
+    $why = if ($local) { 'gns3.exe is not installed here' } else { "the server ($Gns3Host) is not this machine" }
+    "$why. Open $web in a browser and open the project '$($project.name)'."
+}
+
+function Format-InspectGuide {
+    # The numbered "what to do now" block printed after an -Inspect run.
+    param([pscustomobject] $Meta, [object[]] $Nodes, [string] $GuiLine, [string] $Teardown)
+    $n = 0
+    if ($GuiLine) {
+        "$((++$n)). Look at the project: $GuiLine"
+    }
+    if ($Nodes) {
+        "$((++$n)). Open a console on each node (click the link, or in the GUI right-click the node > Console):"
+        foreach ($node in $Nodes | Sort-Object name) {
+            $consoleHost = if (-not $node.console_host -or $node.console_host -in '0.0.0.0', '::') { $Gns3Host } else { $node.console_host }
+            switch ($node.console_type) {
+                'telnet' { "     $($node.name): telnet://${consoleHost}:$($node.console)   (or: telnet $consoleHost $($node.console))" }
+                'vnc' { "     $($node.name): vnc://${consoleHost}:$($node.console)" }
+                default { "     $($node.name): console type '$($node.console_type)', nothing to open" }
+            }
+        }
+    }
+    $checks = if ($Meta.PSObject.Properties['inspect']) { @($Meta.inspect) } else { @() }
+    if ($checks) {
+        "$((++$n)). In each console, type the command and compare with the expected result:"
+        foreach ($c in $checks) {
+            $missing = if ($Nodes -and -not ($Nodes | Where-Object name -eq $c.node)) { "   (the project has no node named $($c.node))" } else { '' }
+            "     $($c.node)> $($c.command)$missing"
+            "        expect: $($c.expect)"
+        }
+    }
+    "$((++$n)). Tear down when done: $Teardown"
+}
+
 function Invoke-Scenario {
     # Runs one scenario folder: init, a stale-state check, apply, output, checks.ps1, then destroy,
     # which runs whenever init and the state check succeeded (also after a failed apply or failed
-    # checks). Returns a summary row.
-    param([string] $Dir, [pscustomobject] $Meta, [string] $Server, [switch] $Dev, [switch] $Capture)
-    $row = [pscustomobject]@{ Scenario = $Meta.name; Result = 'FAIL'; FailedStep = $null; Seconds = 0; Message = '' }
+    # checks). With -Inspect there is no destroy: the nodes are started, the project is opened in
+    # the GUI and the row carries the "what to do now" block in Guide. Returns a summary row.
+    param([string] $Dir, [pscustomobject] $Meta, [string] $Server, [switch] $Dev, [switch] $Capture, [switch] $Inspect)
+    $row = [pscustomobject]@{ Scenario = $Meta.name; Action = $(if ($Inspect) { 'inspect' } else { 'run' }); Result = 'FAIL'; FailedStep = $null; Seconds = 0; Message = ''; Guide = @() }
     $clock = [Diagnostics.Stopwatch]::StartNew()
     $step = 'requires'
     $initDone = $false
+    $outputs = @{}
     try {
         foreach ($need in @($Meta.requires)) {
             switch ($need) {
@@ -364,14 +466,11 @@ function Invoke-Scenario {
         $step = 'init'
         Invoke-Native terraform "-chdir=$Dir", init, -input=false, -upgrade, -no-color | Out-Host
         # Resources left in state by an earlier run that never destroyed are not this run's to
-        # delete: fail without apply and without destroy.
+        # delete: fail without apply and without destroy. -Destroy is the way to remove them.
         $step = 'state'
-        if (Test-Path -LiteralPath (Join-Path $Dir 'terraform.tfstate')) {
-            $left = @(terraform "-chdir=$Dir" state list 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ })
-            if ($LASTEXITCODE -ne 0) { throw "terraform state list failed with exit code ${LASTEXITCODE}: $($left -join '; ')" }
-            if ($left) {
-                throw "stale state from a previous run; destroy it first (terraform -chdir=$Dir destroy). In state: $($left -join ', ')"
-            }
+        $left = Get-ScenarioState -Dir $Dir
+        if ($left) {
+            throw "stale state from a previous run; destroy it first: $(Get-ScenarioTeardownCommand -Name $Meta.name -Dev:$Dev). In state: $($left -join ', ')"
         }
         $initDone = $true
         # The lock file names where the provider came from: it must be the Registry build. Under
@@ -395,15 +494,29 @@ function Invoke-Scenario {
         }
         $step = 'checks'
         & (Join-Path $Dir 'checks.ps1') -Server $Server -Outputs $outputs
+        if ($Inspect -and $outputs['project_id']) {
+            $step = 'start'
+            $nodes = @(Start-ScenarioNodes -Server $Server -ProjectId $outputs['project_id'])
+            Write-Host "$($Meta.name): started $($nodes.Count) node(s)."
+            $step = 'gui'
+            $gui = Open-ScenarioProject -Server $Server -ProjectId $outputs['project_id']
+            $row.Guide = @(Format-InspectGuide -Meta $Meta -Nodes $nodes -GuiLine $gui -Teardown (Get-ScenarioTeardownCommand -Name $Meta.name -Dev:$Dev))
+        }
+        elseif ($Inspect) {
+            $row.Guide = @(Format-InspectGuide -Meta $Meta -GuiLine "the scenario has no project_id output, so there is no project to open; see test/scenarios/$($Meta.name)/README.md" -Teardown (Get-ScenarioTeardownCommand -Name $Meta.name -Dev:$Dev))
+        }
         $row.Result = 'PASS'
     }
     catch {
         $row.FailedStep = $step
         $row.Message = "$_"
         Write-Host "$($Meta.name): $step failed: $_" -ForegroundColor Red
+        if ($Inspect -and $initDone) {
+            $row.Guide = @(Format-InspectGuide -Meta $Meta -Teardown (Get-ScenarioTeardownCommand -Name $Meta.name -Dev:$Dev))
+        }
     }
     finally {
-        if ($initDone) {
+        if ($initDone -and -not $Inspect) {
             try {
                 Invoke-Native terraform "-chdir=$Dir", destroy, -auto-approve, -input=false, -no-color | Out-Host
             }
@@ -414,6 +527,45 @@ function Invoke-Scenario {
                 Write-Host "$($Meta.name): destroy failed: $_" -ForegroundColor Red
             }
         }
+        $row.Seconds = [int]$clock.Elapsed.TotalSeconds
+    }
+    $row
+}
+
+function Invoke-ScenarioDestroy {
+    # Destroys a scenario left up by -Inspect (or by any run that never destroyed): init, destroy,
+    # then a check that the state is empty, then removes terraform.tfstate and its backup. There is
+    # no stale-state refusal and no lock-file check: this is the path that clears stale state.
+    param([string] $Dir, [pscustomobject] $Meta)
+    $row = [pscustomobject]@{ Scenario = $Meta.name; Action = 'destroy'; Result = 'FAIL'; FailedStep = $null; Seconds = 0; Message = ''; Guide = @() }
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    $step = 'requires'
+    try {
+        # gns3_image reads its source file on refresh, so an image scenario needs it back.
+        if (@($Meta.requires) -contains 'image') { Write-Host "Wrote $(New-ScenarioDummyImage)" }
+        $step = 'init'
+        Invoke-Native terraform "-chdir=$Dir", init, -input=false, -upgrade, -no-color | Out-Host
+        $step = 'destroy'
+        $before = @(Get-ScenarioState -Dir $Dir | Where-Object { $_ -notlike 'data.*' })
+        Invoke-Native terraform "-chdir=$Dir", destroy, -auto-approve, -input=false, -no-color | Out-Host
+        $step = 'state'
+        $left = @(Get-ScenarioState -Dir $Dir)
+        if ($left) {
+            throw "destroy succeeded but the state still holds: $($left -join ', ')"
+        }
+        foreach ($file in 'terraform.tfstate', 'terraform.tfstate.backup') {
+            $path = Join-Path $Dir $file
+            if (Test-Path -LiteralPath $path) { Remove-Item -LiteralPath $path -Force -ErrorAction Stop }
+        }
+        $row.Message = if ($before) { "destroyed $($before.Count) resource(s); state cleared" } else { 'nothing in state; state cleared' }
+        $row.Result = 'PASS'
+    }
+    catch {
+        $row.FailedStep = $step
+        $row.Message = "$_"
+        Write-Host "$($Meta.name): $step failed: $_" -ForegroundColor Red
+    }
+    finally {
         $row.Seconds = [int]$clock.Elapsed.TotalSeconds
     }
     $row
@@ -506,7 +658,7 @@ task Gns3Install {
         ''
         'Up: [README](../README.md)'
         ''
-        'See also: [Provider docs](index.md), [API drift](api-drift.md), [Emulator images](images.md)'
+        'See also: [Provider docs](index.md), [API drift](api-drift.md), [Emulator images](images.md), [Looking at a scenario in the GUI](manual-steps.md)'
         ''
         'Written by `Invoke-Build Gns3Install` (`.build.ps1`); rerunning it with `-Force` rewrites this file.'
         'This page is not generated by tfplugindocs and is not part of the registry docs.'
@@ -665,7 +817,13 @@ task TestAcc {
 
 function Invoke-Gns3Range {
     # The body of Gns3Range, a function so that Release can run it with -Dev.
-    param([switch] $Dev, [switch] $Capture)
+    param([switch] $Dev, [switch] $Capture, [switch] $Inspect, [switch] $Destroy)
+    if ($Inspect -and $Destroy) {
+        throw 'Gns3Range takes -Inspect or -Destroy, not both.'
+    }
+    if (($Inspect -or $Destroy) -and -not $Scenario) {
+        throw "Gns3Range -$(if ($Inspect) { 'Inspect' } else { 'Destroy' }) needs -Scenario <name>."
+    }
     $found = @(Get-ChildItem -Path (Join-Path $PSScriptRoot 'test' 'scenarios' '*' 'scenario.json') -File | ForEach-Object {
         [pscustomobject]@{ Dir = $_.DirectoryName; Meta = Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json }
     })
@@ -677,9 +835,20 @@ function Invoke-Gns3Range {
         throw "No scenario named '$Scenario'. Scenarios: $(@($found.Meta.name) -join ', ')"
     }
 
+    # -Inspect records here whether it started the server, so that -Destroy stops only a server an
+    # -Inspect run started, and only once no other inspected scenario is left up.
+    $inspectDir = Join-Path $Gns3Work 'inspect'
+    $marker = if ($Scenario) { Join-Path $inspectDir "$Scenario.json" } else { $null }
     $started = $null
     if (-not (Invoke-Gns3Version)) {
         $started = Start-Gns3Server
+    }
+    elseif ($Destroy -and (Test-Path -LiteralPath $marker)) {
+        $record = Get-Content -LiteralPath $marker -Raw | ConvertFrom-Json
+        $ours = Get-Gns3StartedProcess
+        if ($record.startedServer -and $ours -and $ours.Id -eq $record.serverPid) {
+            $started = $ours
+        }
     }
     $null = New-Item -ItemType Directory -Force -Path $Gns3Work -ErrorAction Stop
     $cliConfig = Join-Path $Gns3Work 'scenario-terraform.rc'
@@ -713,20 +882,51 @@ function Invoke-Gns3Range {
     $env:GNS3_HOST = $Gns3Host
     $env:GNS3_PORT = [string]$Gns3Port
     $server = "http://${Gns3Host}:$Gns3Port"
+    $rows = @()
     try {
         $rows = foreach ($s in $run) {
             Write-Host "== $($s.Meta.name): $($s.Meta.description)" -ForegroundColor Cyan
-            Invoke-Scenario -Dir $s.Dir -Meta $s.Meta -Server $server -Dev:$Dev -Capture:$Capture
+            if ($Destroy) {
+                Invoke-ScenarioDestroy -Dir $s.Dir -Meta $s.Meta
+            }
+            else {
+                Invoke-Scenario -Dir $s.Dir -Meta $s.Meta -Server $server -Dev:$Dev -Capture:$Capture -Inspect:$Inspect
+            }
         }
     }
     finally {
         foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name]) }
-        if ($started) {
+        $keepServer = $false
+        if ($Inspect) {
+            # The scenario stays up, so the server stays running; the marker tells -Destroy whose it is.
+            $null = New-Item -ItemType Directory -Force -Path $inspectDir -ErrorAction Stop
+            [ordered]@{ scenario = $Scenario; dev = [bool]$Dev; startedServer = [bool]$started; serverPid = $(if ($started) { $started.Id } else { $null }); at = (Get-Date).ToString('o') } |
+                ConvertTo-Json | Set-Content -LiteralPath $marker -Encoding ascii -ErrorAction Stop
+            $keepServer = $true
+            if ($started) { Write-Host "Left gns3server PID $($started.Id) running for the inspected scenario; -Destroy stops it." -ForegroundColor Yellow }
+        }
+        elseif ($Destroy) {
+            if (@($rows | Where-Object Result -eq 'PASS') -and (Test-Path -LiteralPath $marker)) {
+                Remove-Item -LiteralPath $marker -Force -ErrorAction Stop
+            }
+            $others = @(Get-ChildItem -Path $inspectDir -Filter '*.json' -File -ErrorAction SilentlyContinue)
+            if ($others) {
+                $keepServer = $true
+                if ($started) { Write-Host "Left gns3server PID $($started.Id) running: still inspected: $(@($others.BaseName) -join ', ')." -ForegroundColor Yellow }
+            }
+        }
+        if ($started -and -not $keepServer) {
             Stop-Gns3Server
         }
     }
     Write-Host "== Gns3Range summary ($mode)" -ForegroundColor Cyan
-    $rows | Format-Table -AutoSize -Wrap | Out-String -Width 250 | Write-Host
+    $rows | Format-Table -Property Scenario, Action, Result, FailedStep, Seconds, Message -AutoSize -Wrap | Out-String -Width 250 | Write-Host
+    $guide = @($rows | ForEach-Object { $_.Guide })
+    if ($guide) {
+        Write-Host "== What to do now ($($Scenario))" -ForegroundColor Cyan
+        Write-Host ($guide -join "`n")
+        Write-Host ''
+    }
     $failed = @($rows | Where-Object Result -ne 'PASS')
     if ($failed) {
         throw "$($failed.Count) of $(@($rows).Count) scenario(s) failed ($mode): $(@($failed.Scenario) -join ', ')"
@@ -740,8 +940,12 @@ function Invoke-Gns3Range {
 # config of its own, so Jerry's terraform.rc never applies. By default that config is direct {}
 # only and the scenarios run the provider published on the Registry; with -Dev it adds a
 # dev_overrides entry for a go build of this checkout. -Capture is a stub.
+# -Scenario <name> -Inspect skips destroy, starts the nodes, opens the project in gns3.exe (or
+# prints the web UI address), leaves the server running and prints a numbered "what to do now"
+# block: console links, the scenario.json "inspect" commands and the teardown command.
+# -Scenario <name> -Destroy destroys it, clears its state and stops a server -Inspect started.
 task Gns3Range {
-    Invoke-Gns3Range -Dev:$Dev -Capture:$Capture
+    Invoke-Gns3Range -Dev:$Dev -Capture:$Capture -Inspect:$Inspect -Destroy:$Destroy
 }
 
 # generic: copy to any Invoke-Build repo

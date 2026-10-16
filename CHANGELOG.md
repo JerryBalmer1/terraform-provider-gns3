@@ -21,12 +21,17 @@ Build (`.build.ps1`):
 - `Gns3Range` runs `terraform init -upgrade`. It fails a scenario without applying or destroying when its state still holds resources from an earlier run.
 - New `Gns3Range -Dev`: runs the scenarios with a `go build` of the checkout through a `dev_overrides` CLI config of its own, skips the lock-file version check and prints `DEV BUILD` in the summary.
 - New `Gns3Range -Capture`: a stub that prints "capture not implemented". `docs/screenshots/` is tracked for it.
+- New `Gns3Range -Scenario <name> -Inspect`: applies and checks one scenario, skips destroy, starts its nodes (`POST /v2/projects/{project_id}/nodes/start`), opens the project in gns3.exe unless one is already running (otherwise it prints where to open it, including the web UI address), leaves the server running and prints a numbered "what to do now" block with a `telnet://host:port` line per node, the scenario's expected commands and results, and the teardown command.
+- New `Gns3Range -Scenario <name> -Destroy`: destroys a scenario left up by `-Inspect`, removes its state files and stops the server only if that `-Inspect` run started it. The stale-state refusal now names this command.
+- The `Gns3Range` summary table has an `Action` column (`run`, `inspect`, `destroy`).
+- `scenario.json` takes an optional `inspect` array (`node`, `command`, `expect`), printed by `-Inspect`. `vpcs-startup-config` has two: PC1 `show ip` and PC1 `ping 10.0.0.2`.
 - The script now loads on Linux (CI): the GNS3 install folder is only resolved on Windows, and the GNS3 server tasks fail there with "GNS3 server tasks run on Windows only".
 
 Docs:
 
 - Hand-written pages under `docs/` and each scenario README have `Up:` and `See also:` lines. `test/scenarios/README.md` lists the scenarios.
 - `templates/` holds the tfplugindocs default templates, unchanged.
+- New hand-written `docs/manual-steps.md`: each step of looking at a scenario in the GUI by hand, and whether `-Inspect` automates it, prints it or leaves it manual.
 
 ## 0.2.0 - 2026-10-15
 

@@ -15,6 +15,8 @@ Builds a project `tf-scenario-vpcs-startup-config` with two VPCS nodes from the 
 
 ## In the GNS3 GUI
 
+`Invoke-Build Gns3Range -Scenario vpcs-startup-config -Inspect` opens the project and starts both nodes (step 1) for you, and prints the console links and the commands in steps 2 and 3 (from the `inspect` array in `scenario.json`). `-Destroy` tears it down.
+
 While the scenario is applied, open `tf-scenario-vpcs-startup-config` (**File > Open project**). The canvas shows PC1 (left) and PC2 (right) joined by one cable, both stopped. To confirm the configuration took effect:
 
 1. Start both nodes (**Control > Start/Resume all nodes**, or right-click each node > **Start**). The link indicators turn green.

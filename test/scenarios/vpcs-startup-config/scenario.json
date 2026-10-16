@@ -1,5 +1,9 @@
 {
   "name": "vpcs-startup-config",
   "description": "Two linked VPCS nodes whose startup.vpc is set through startup_config (10.0.0.1/24 and 10.0.0.2/24).",
-  "requires": ["server"]
+  "requires": ["server"],
+  "inspect": [
+    { "node": "PC1", "command": "show ip", "expect": "IP/MASK     : 10.0.0.1/24" },
+    { "node": "PC1", "command": "ping 10.0.0.2", "expect": "five replies: 84 bytes from 10.0.0.2 icmp_seq=1 ttl=64 time=... ms (to icmp_seq=5)" }
+  ]
 }
