@@ -4,6 +4,16 @@ Terraform provider for GNS3, built on `terraform-plugin-framework` (not SDKv2). 
 
 ## Working rules
 
+Generic (copy to any Invoke-Build repo):
+
+- **Stop and ask** if a probe disagrees with the docs, a task fails twice, the change touches files the prompt did not name, anything would be deleted, or a version bump would be breaking.
+- **Never run `git commit`, `git push` or `git tag`.** Edit and stage only. `.claude/settings.json` blocks them with a PreToolUse hook.
+- **Every task ends with the report template** (`.claude/skills/report-template/SKILL.md`).
+- **Tooling gaps are reported, not worked around.** When an Invoke-Build task fails, lacks a switch or would force a raw command, name it under "Tooling gaps" instead of running the raw command. Skills: `.claude/skills/` (build-and-verify, release-prep, docs, report-template; repo-specific: probe, add-scenario).
+- **Hooks:** `Invoke-Build Setup` sets `core.hooksPath=.githooks` (and `hooks.rangeTask`) once per clone, so `git push` runs `.githooks/pre-push`: a tag runs `Release`, `main` runs `Lint, Test, Gns3Range`, any other branch runs `Lint, Test`.
+
+Repo-specific:
+
 - **Edit and stage only.** Never commit, push, branch, tag or release. `git add` is the last git step; Jerry commits. Never run `goreleaser release`. `goreleaser check` only validates the config and is allowed.
 - **manual-check-list.md is append-only.** Never renumber items. Add new ones at the end of their section. Mark a withdrawn item "(removed in 0.x.0)" and leave its number unused. Item 0.1 tracks the provider version and the exported resource and data source type names; update it in the same task as any change to either. Every item has a self-contained PowerShell block, an Expect line and a Tests line naming the Go test(s) that cover the same behaviour (`Tests: none` when there are none). An Expect you haven't seen yourself is marked `(not yet seen: needs a GNS3 server)` until Jerry confirms it.
 - **Data and docs state their sources.** Client methods cite their GNS3 API docs page in a comment. Every fixture under `pkg/gns3/testdata/` starts with `_header` (`hand-written from docs, not recorded` or `recorded from GNS3 <version> on <date>`) and `_source` (the docs page URL), plus `_notes` for any change from the docs sample. Schema defaults copied from server behaviour name the page they came from.
@@ -50,7 +60,16 @@ CHANGELOG.md                  hand-maintained (goreleaser changelog.disable: tru
 LICENSE (Apache-2.0)  NOTICE
 ```
 
-There is no `templates/` directory: the default tfplugindocs templates are enough. Add `templates/` only when a page needs more than the defaults.
+`templates/` holds three generic tfplugindocs templates (`index.md.tmpl`, `resources.md.tmpl`, `data-sources.md.tmpl`), copied unchanged from the v0.25.0 defaults so a change to every page has one place to go. The pages they generate carry no `Up:` line (relative links in Registry pages are not known to resolve there), and `Test-Docs` exempts `docs/index.md`, `docs/resources/` and `docs/data-sources/` from that rule. Add a per-type template (`templates/resources/<name>.md.tmpl`) only when one page needs more than the defaults.
+
+```
+templates/                    generic tfplugindocs templates (see above)
+.claude/settings.json         PreToolUse hook: blocks git commit/push/tag (.claude/hooks/block-git-write.ps1)
+.claude/skills/<name>/        agent skills: build-and-verify, release-prep, docs, report-template, probe, add-scenario
+.githooks/pre-push            build before push; enabled by Invoke-Build Setup
+```
+
+`.build.ps1` also has `Test-Docs` (relative links in every .md resolve; `Up:` on every page under `docs/` and `test/scenarios/` except the generated Registry pages; run in CI), `Release` (Lint, Test, `Gns3Range -Dev`, Test-Docs, clean `docs/screenshots`) and `Setup` (git hooks path). `docs/screenshots/` (tracked through `.gitkeep`) is for `Gns3Range -Capture`, which is a stub that prints "capture not implemented".
 
 ## Client design
 
@@ -104,7 +123,7 @@ Acceptance tests and manual-check-list section 1 need a GNS3 server: `Invoke-Bui
 
 ## Scenario tests
 
-`Invoke-Build Gns3Range` (or `-Scenario <name>`) runs each scenario against a live server. The server is the one already answering on `-Gns3Host`/`-Gns3Port`, or one started the way `Gns3Start` does and stopped afterwards. For each scenario it runs `terraform init -input=false`, `apply -auto-approve`, `terraform output -json` and `checks.ps1`, then `destroy -auto-approve`, which runs whenever init succeeded, even after a failed apply or failed checks. It prints a summary table and fails if any scenario failed.
+`Invoke-Build Gns3Range` (or `-Scenario <name>`) runs each scenario against a live server. The server is the one already answering on `-Gns3Host`/`-Gns3Port`, or one started the way `Gns3Start` does and stopped afterwards. For each scenario it runs `terraform init -input=false -upgrade`, fails the scenario without apply or destroy when `terraform state list` shows resources left from an earlier run ("stale state from a previous run; destroy it first"), then `apply -auto-approve`, `terraform output -json` and `checks.ps1`, then `destroy -auto-approve`, which runs whenever init succeeded, even after a failed apply or failed checks. It prints a summary table and fails if any scenario failed.
 
 ```
 test/scenarios/<name>/
@@ -116,7 +135,10 @@ test/scenarios/<name>/
 test/images/      files generated at run time for "image" scenarios; only .gitkeep is tracked
 ```
 
-- **Scenarios use the published provider from the Registry, never the dev build.** No `dev_overrides`, no filesystem mirror. `Gns3Range` points `TF_CLI_CONFIG_FILE` at its own CLI config (`direct {}` only) and fails the scenario unless `.terraform.lock.hcl` locks `registry.terraform.io/jerrybalmer1/gns3` at the pinned version. To exercise unreleased code, use `TestAcc` instead.
+- **Two modes.** `Gns3Range` points `TF_CLI_CONFIG_FILE` at its own CLI config, so Jerry's `terraform.rc` never applies.
+  - **Published (default):** the config is `direct {}` only, so scenarios run the release on the Registry. A scenario fails unless `.terraform.lock.hcl` locks `registry.terraform.io/jerrybalmer1/gns3` at the pinned version. This proves what users get; the pre-push hook runs it for `main`.
+  - **`-Dev`:** `go build`s this checkout to `$env:TEMP\gns3\dev-provider`, adds `dev_overrides { "JerryBalmer1/gns3" = <that dir> }` before `direct {}`, skips the lock-file assert and prints `DEV BUILD` in the summary header. This proves unreleased code; `Release` runs it, because the version being tagged is not on the Registry yet.
+  Never use a filesystem mirror.
 - `requires: "image"` makes `Gns3Range` write `test/images/scenario-dummy.img` before init. Its bytes never change, because GNS3 2.2 can't delete images and `gns3_image` refuses to upload over a different file of the same name.
 - In `checks.ps1`, unroll list responses (`Invoke-RestMethod ... | ForEach-Object { $_ }`): pwsh 7 writes a JSON array to the pipeline as one object.
 - **Adding a scenario.** When asked to add a scenario for a resource, attribute or behaviour not already covered, first read the provider schema (`internal/provider/<name>_resource.go` or `_data_source.go`) and its page under `docs/`. If what the scenario should assert is still unclear, stop and ask rather than invent expected values.

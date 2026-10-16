@@ -29,7 +29,15 @@ Param(
 
     # Gns3Range: run only the scenario with this name (its scenario.json "name").
     [string]
-    $Scenario
+    $Scenario,
+
+    # Gns3Range: use a go build of this checkout (dev_overrides) instead of the Registry release.
+    [switch]
+    $Dev,
+
+    # Gns3Range: screenshot each applied scenario in the GNS3 GUI. A stub for now.
+    [switch]
+    $Capture
 )
 
 # InvokeBuild must already be installed (Install-Module InvokeBuild -Scope CurrentUser); this
@@ -68,9 +76,11 @@ Register-ArgumentCompleter -CommandName Invoke-Build.ps1 -ParameterName File -Sc
 ######################################################################################################
 
 # Everything the GNS3 tasks download or write lives here, never in Jerry's GNS3 settings.
-$Gns3Work = Join-Path $env:TEMP 'gns3'
+# GetTempPath() is $env:TEMP on Windows and also works on the Linux CI runner, where $env:TEMP
+# and $env:ProgramFiles are unset and Join-Path would fail while the script loads (Test-Docs).
+$Gns3Work = Join-Path ([IO.Path]::GetTempPath()) 'gns3'
 $Gns3PidFile = Join-Path $Gns3Work 'server.pid'
-$Gns3DefaultFolder = Join-Path $env:ProgramFiles 'GNS3'
+$Gns3DefaultFolder = Join-Path ($env:ProgramFiles ?? 'C:\Program Files') 'GNS3'
 
 # The all-in-one installer's optional components, from its components page (GNS3 2.2.x).
 # The provider's tests need only the GNS3 server and VPCS (plus uBridge, which the server uses
@@ -330,9 +340,10 @@ function ConvertFrom-TerraformOutput {
 }
 
 function Invoke-Scenario {
-    # Runs one scenario folder: init, apply, output, checks.ps1, then destroy, which runs whenever
-    # init succeeded (also after a failed apply or failed checks). Returns a summary row.
-    param([string] $Dir, [pscustomobject] $Meta, [string] $Server)
+    # Runs one scenario folder: init, a stale-state check, apply, output, checks.ps1, then destroy,
+    # which runs whenever init and the state check succeeded (also after a failed apply or failed
+    # checks). Returns a summary row.
+    param([string] $Dir, [pscustomobject] $Meta, [string] $Server, [switch] $Dev, [switch] $Capture)
     $row = [pscustomobject]@{ Scenario = $Meta.name; Result = 'FAIL'; FailedStep = $null; Seconds = 0; Message = '' }
     $clock = [Diagnostics.Stopwatch]::StartNew()
     $step = 'requires'
@@ -346,12 +357,25 @@ function Invoke-Scenario {
             }
         }
         $step = 'init'
-        Invoke-Native terraform "-chdir=$Dir", init, -input=false, -no-color | Out-Host
+        Invoke-Native terraform "-chdir=$Dir", init, -input=false, -upgrade, -no-color | Out-Host
+        # Resources left in state by an earlier run that never destroyed are not this run's to
+        # delete: fail without apply and without destroy.
+        $step = 'state'
+        if (Test-Path -LiteralPath (Join-Path $Dir 'terraform.tfstate')) {
+            $left = @(terraform "-chdir=$Dir" state list 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ })
+            if ($LASTEXITCODE -ne 0) { throw "terraform state list failed with exit code ${LASTEXITCODE}: $($left -join '; ')" }
+            if ($left) {
+                throw "stale state from a previous run; destroy it first (terraform -chdir=$Dir destroy). In state: $($left -join ', ')"
+            }
+        }
         $initDone = $true
-        # The lock file names where the provider came from: it must be the Registry build.
-        $lock = Get-Content -LiteralPath (Join-Path $Dir '.terraform.lock.hcl') -Raw
-        if ($lock -notmatch 'provider "registry\.terraform\.io/jerrybalmer1/gns3" \{\s+version\s+=\s+"0\.2\.0"') {
-            throw "init did not lock registry.terraform.io/jerrybalmer1/gns3 0.2.0. Lock file:`n$lock"
+        # The lock file names where the provider came from: it must be the Registry build. Under
+        # -Dev the dev override replaces it, so the lock file says nothing about what runs.
+        if (-not $Dev) {
+            $lock = Get-Content -LiteralPath (Join-Path $Dir '.terraform.lock.hcl') -Raw
+            if ($lock -notmatch 'provider "registry\.terraform\.io/jerrybalmer1/gns3" \{\s+version\s+=\s+"0\.2\.0"') {
+                throw "init did not lock registry.terraform.io/jerrybalmer1/gns3 0.2.0. Lock file:`n$lock"
+            }
         }
         $step = 'apply'
         Invoke-Native terraform "-chdir=$Dir", apply, -auto-approve, -input=false, -no-color | Out-Host
@@ -359,6 +383,11 @@ function Invoke-Scenario {
         $json = terraform "-chdir=$Dir" output -json -no-color
         if ($LASTEXITCODE -ne 0) { throw "terraform output -json failed with exit code $LASTEXITCODE" }
         $outputs = ConvertFrom-TerraformOutput -Json ($json -join "`n")
+        if ($Capture) {
+            # Stub: opening the project in gns3.exe and saving a screenshot is not written yet.
+            $step = 'capture'
+            Write-Host "$($Meta.name): capture not implemented" -ForegroundColor Yellow
+        }
         $step = 'checks'
         & (Join-Path $Dir 'checks.ps1') -Server $Server -Outputs $outputs
         $row.Result = 'PASS'
@@ -469,6 +498,10 @@ task Gns3Install {
     $doc = Join-Path $PSScriptRoot 'docs' 'gns3-install.md'
     @(
         '# GNS3 server install record'
+        ''
+        'Up: [README](../README.md)'
+        ''
+        'See also: [Provider docs](index.md), [API drift](api-drift.md), [Emulator images](images.md)'
         ''
         'Written by `Invoke-Build Gns3Install` (`.build.ps1`); rerunning it with `-Force` rewrites this file.'
         'This page is not generated by tfplugindocs and is not part of the registry docs.'
@@ -625,12 +658,9 @@ task TestAcc {
     Write-Host "Acceptance tests passed. Log: $log" -ForegroundColor Green
 }
 
-# Runs each scenario under test/scenarios (or only -Scenario <name>) against a live server with
-# the provider published on the Registry: init, apply, output -json, checks.ps1, destroy. Starts
-# a server like Gns3Start when nothing answers and stops afterwards only the server it started.
-# Terraform runs with a CLI config of its own (direct {} only), so dev_overrides and filesystem
-# mirrors in Jerry's terraform.rc never replace the Registry build.
-task Gns3Range {
+function Invoke-Gns3Range {
+    # The body of Gns3Range, a function so that Release can run it with -Dev.
+    param([switch] $Dev, [switch] $Capture)
     $found = @(Get-ChildItem -Path (Join-Path $PSScriptRoot 'test' 'scenarios' '*' 'scenario.json') -File | ForEach-Object {
         [pscustomobject]@{ Dir = $_.DirectoryName; Meta = Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json }
     })
@@ -648,7 +678,27 @@ task Gns3Range {
     }
     $null = New-Item -ItemType Directory -Force -Path $Gns3Work -ErrorAction Stop
     $cliConfig = Join-Path $Gns3Work 'scenario-terraform.rc'
-    "provider_installation {`n  direct {}`n}" | Set-Content -LiteralPath $cliConfig -Encoding ascii -ErrorAction Stop
+    $mode = 'published provider from the Registry'
+    if ($Dev) {
+        # A build of this checkout in a folder of its own, named the way dev_overrides expects.
+        $devDir = Join-Path $Gns3Work 'dev-provider'
+        $null = New-Item -ItemType Directory -Force -Path $devDir -ErrorAction Stop
+        $exe = Join-Path $devDir $(if ($IsWindows) { 'terraform-provider-gns3.exe' } else { 'terraform-provider-gns3' })
+        Invoke-Native go build, -o, $exe, $PSScriptRoot
+        $mode = "DEV BUILD $exe"
+        @(
+            'provider_installation {'
+            '  dev_overrides {'
+            "    `"JerryBalmer1/gns3`" = `"$($devDir -replace '\\', '/')`""
+            '  }'
+            '  direct {}'
+            '}'
+        ) | Set-Content -LiteralPath $cliConfig -Encoding ascii -ErrorAction Stop
+    }
+    else {
+        "provider_installation {`n  direct {}`n}" | Set-Content -LiteralPath $cliConfig -Encoding ascii -ErrorAction Stop
+    }
+    Write-Host "Gns3Range: $mode" -ForegroundColor Cyan
     $saved = @{}
     foreach ($name in 'TF_CLI_CONFIG_FILE', 'TF_IN_AUTOMATION', 'GNS3_HOST', 'GNS3_PORT') {
         $saved[$name] = [Environment]::GetEnvironmentVariable($name)
@@ -661,7 +711,7 @@ task Gns3Range {
     try {
         $rows = foreach ($s in $run) {
             Write-Host "== $($s.Meta.name): $($s.Meta.description)" -ForegroundColor Cyan
-            Invoke-Scenario -Dir $s.Dir -Meta $s.Meta -Server $server
+            Invoke-Scenario -Dir $s.Dir -Meta $s.Meta -Server $server -Dev:$Dev -Capture:$Capture
         }
     }
     finally {
@@ -670,12 +720,82 @@ task Gns3Range {
             Stop-Gns3Server
         }
     }
+    Write-Host "== Gns3Range summary ($mode)" -ForegroundColor Cyan
     $rows | Format-Table -AutoSize -Wrap | Out-String -Width 250 | Write-Host
     $failed = @($rows | Where-Object Result -ne 'PASS')
     if ($failed) {
-        throw "$($failed.Count) of $(@($rows).Count) scenario(s) failed: $(@($failed.Scenario) -join ', ')"
+        throw "$($failed.Count) of $(@($rows).Count) scenario(s) failed ($mode): $(@($failed.Scenario) -join ', ')"
     }
-    Write-Host "All $(@($rows).Count) scenario(s) passed against $server." -ForegroundColor Green
+    Write-Host "All $(@($rows).Count) scenario(s) passed against $server ($mode)." -ForegroundColor Green
+}
+
+# Runs each scenario under test/scenarios (or only -Scenario <name>) against a live server: init,
+# a stale-state check, apply, output -json, checks.ps1, destroy. Starts a server like Gns3Start
+# when nothing answers and stops afterwards only the server it started. Terraform runs with a CLI
+# config of its own, so Jerry's terraform.rc never applies. By default that config is direct {}
+# only and the scenarios run the provider published on the Registry; with -Dev it adds a
+# dev_overrides entry for a go build of this checkout. -Capture is a stub.
+task Gns3Range {
+    Invoke-Gns3Range -Dev:$Dev -Capture:$Capture
+}
+
+# generic: copy to any Invoke-Build repo
+# Walks every .md in the repo (not .git, .terraform or node_modules) and fails on any relative
+# link or image path that does not resolve, and on any .md under docs/ or test/scenarios/ without
+# an "Up:" line. The pages tfplugindocs generates for the Registry (docs/index.md, docs/resources/,
+# docs/data-sources/) need no Up: line; their links are still checked. Fenced code blocks and
+# inline code are skipped. A leading / resolves from the repo root, as on GitHub.
+task Test-Docs {
+    $skip = '[\\/](\.git|\.terraform|node_modules)([\\/]|$)'
+    $files = @(Get-ChildItem -Path $PSScriptRoot -Recurse -File -Filter '*.md' -Force | Where-Object { $_.FullName -notmatch $skip })
+    $upRequired = '^(docs|test[\\/]scenarios)[\\/]'
+    $upExempt = '^docs[\\/]((resources|data-sources)[\\/]|index\.md$)'
+    $problems = foreach ($file in $files) {
+        $rel = [IO.Path]::GetRelativePath($PSScriptRoot, $file.FullName)
+        $text = Get-Content -LiteralPath $file.FullName -Raw
+        if (-not $text) { $text = '' }
+        $prose = [regex]::Replace($text, '(?ms)^[ \t]*(```|~~~).*?^[ \t]*\1[^\r\n]*$', '')
+        $prose = [regex]::Replace($prose, '``[^`]*``|`[^`\r\n]*`', '')
+        if ($rel -match $upRequired -and $rel -notmatch $upExempt -and $prose -notmatch '(?m)^Up:\s') {
+            "${rel}: no 'Up:' line"
+        }
+        # Inline links and images [text](target "title"), plus reference definitions [x]: target.
+        $targets = @([regex]::Matches($prose, '!?\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)') | ForEach-Object { $_.Groups[1].Value }) +
+            @([regex]::Matches($prose, '(?m)^\s{0,3}\[[^\]]+\]:\s*<?(\S+?)>?(?:\s+.*)?$') | ForEach-Object { $_.Groups[1].Value })
+        foreach ($target in $targets) {
+            if ($target -match '^[a-zA-Z][a-zA-Z0-9+.-]*:' -or $target.StartsWith('#')) { continue }
+            $path = [uri]::UnescapeDataString(($target -split '[#?]', 2)[0])
+            if (-not $path) { continue }
+            $base = if ($path.StartsWith('/')) { $PSScriptRoot } else { $file.DirectoryName }
+            if (-not (Test-Path -LiteralPath (Join-Path $base $path.TrimStart('/')))) {
+                "${rel}: link target '$target' does not resolve"
+            }
+        }
+    }
+    if ($problems) {
+        throw "Test-Docs found $(@($problems).Count) problem(s) in $($files.Count) .md file(s):`n$($problems -join "`n")"
+    }
+    Write-Host "Test-Docs: $($files.Count) .md file(s); every relative link resolves and every page under docs/ and test/scenarios/ that needs an Up: line has one." -ForegroundColor Green
+}
+
+# The full chain before a release tag (the pre-push hook runs it for any tag): lint, unit tests,
+# the scenarios against a live server with a dev build of this checkout (the version being tagged
+# is not on the Registry yet), the docs link check, and no uncommitted screenshots.
+task Release Lint, Test, { Invoke-Gns3Range -Dev }, Test-Docs, {
+    $dirty = git -C $PSScriptRoot status --porcelain -- docs/screenshots
+    if ($LASTEXITCODE -ne 0) { throw "git status --porcelain docs/screenshots failed with exit code $LASTEXITCODE" }
+    if ($dirty) {
+        throw "docs/screenshots has uncommitted changes; commit or discard them before tagging:`n$($dirty -join "`n")"
+    }
+    Write-Host 'Release checks passed.' -ForegroundColor Green
+}
+
+# Points git at the tracked hooks in .githooks (pre-push runs the build before a push) and tells
+# the generic pre-push hook which task runs the scenarios. Changes only this clone's .git/config.
+task Setup {
+    Invoke-Native git '-C', $PSScriptRoot, config, core.hooksPath, '.githooks'
+    Invoke-Native git '-C', $PSScriptRoot, config, hooks.rangeTask, Gns3Range
+    Write-Host 'core.hooksPath = .githooks, hooks.rangeTask = Gns3Range. git push now runs .githooks/pre-push.' -ForegroundColor Green
 }
 
 # Runs one manual-check-list.md item's PowerShell block in a fresh pwsh and prints its output

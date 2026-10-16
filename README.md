@@ -178,7 +178,11 @@ To get the old behaviour back, delete the `dev_overrides` block (or restore `ter
 
 ## Make targets
 
-`GNUmakefile` has `build`, `install`, `test`, `testacc`, `docs`, `lint` and `fmt`, and stays the cross-platform path. On Windows, `.build.ps1` has the same commands as Invoke-Build tasks (`Build`, `Install`, `Test`, `Lint`, `Docs`; `Invoke-Build` alone runs `Build`, `Lint`, `Test`), plus `Gns3Status`, `Gns3Install`, `Gns3Start`, `Gns3Stop`, `Gns3Images`, `TestAcc [-AutoStart]` and `Checklist -Item <n.m>`, which runs one `manual-check-list.md` item in a fresh pwsh and prints its output beside its Expect line. Without either, run the commands directly:
+`GNUmakefile` has `build`, `install`, `test`, `testacc`, `docs`, `lint` and `fmt`, and stays the cross-platform path. On Windows, `.build.ps1` has the same commands as Invoke-Build tasks (`Build`, `Install`, `Test`, `Lint`, `Docs`; `Invoke-Build` alone runs `Build`, `Lint`, `Test`), plus `Gns3Status`, `Gns3Install`, `Gns3Start`, `Gns3Stop`, `Gns3Images`, `TestAcc [-AutoStart]` and `Checklist -Item <n.m>`, which runs one `manual-check-list.md` item in a fresh pwsh and prints its output beside its Expect line. `Test-Docs` checks that every relative link in the repo's `.md` files resolves and that every page under `docs/` and `test/scenarios/` has an `Up:` line, apart from the generated Registry pages (CI runs it too). `Gns3Range` runs the scenarios with the provider published on the Registry; `Gns3Range -Dev` runs them with a `go build` of this checkout through a `dev_overrides` CLI config of its own and prints `DEV BUILD` in its summary. `Release` runs `Lint`, `Test`, `Gns3Range -Dev` and `Test-Docs`, and checks that `docs/screenshots` has no uncommitted changes.
+
+Run `Invoke-Build Setup` once per clone. It sets `git config core.hooksPath .githooks`, so `git push` runs [.githooks/pre-push](.githooks/pre-push) first: pushing a tag runs `Release`, pushing `main` runs `Lint`, `Test` and `Gns3Range`, and any other branch runs `Lint` and `Test`. A failing task blocks the push.
+
+Without make or Invoke-Build, run the commands directly:
 
 | Target | Command |
 |---|---|

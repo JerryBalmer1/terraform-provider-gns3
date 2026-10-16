@@ -61,6 +61,14 @@ jobs:
             exit 1
           fi
 
+      # Every relative link and image in the repo's .md files resolves, and every page under
+      # docs/ and test/scenarios/ has an "Up:" line. Runs the Invoke-Build task, not a copy of it.
+      - name: Test-Docs
+        shell: pwsh
+        run: |
+          Install-Module InvokeBuild -RequiredVersion 5.14.23 -Scope CurrentUser -Force
+          Invoke-Build Test-Docs
+
       # Validates .goreleaser.yml so a broken config fails here, not on a tag push.
       - name: goreleaser check
         uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0

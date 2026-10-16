@@ -1,5 +1,9 @@
 # two-nodes-one-link
 
+Up: [Scenario tests](../README.md)
+
+See also: [image-upload](../image-upload/README.md), [project-only](../project-only/README.md), [vpcs-startup-config](../vpcs-startup-config/README.md)
+
 Builds a project `tf-scenario-two-nodes-one-link` with two VPCS nodes, `PC1` at (-150, 0) and `PC2` at (150, 0), made from the built-in `VPCS` template (`gns3_template` data source), and one `gns3_link` between the first port of each (`ports[0]`, which is `Ethernet0`, adapter 0 port 0 on VPCS). The nodes are not started.
 
 ## What checks.ps1 verifies

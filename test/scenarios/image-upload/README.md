@@ -1,5 +1,9 @@
 # image-upload
 
+Up: [Scenario tests](../README.md)
+
+See also: [project-only](../project-only/README.md), [two-nodes-one-link](../two-nodes-one-link/README.md), [vpcs-startup-config](../vpcs-startup-config/README.md)
+
 Uploads `test/images/scenario-dummy.img` to the `local` compute's qemu images folder as `tf-scenario-dummy.img`, with `gns3_image` (`source_path`, and `md5sum = filemd5(...)` to pin the content).
 
 `Invoke-Build Gns3Range` writes the source file before `terraform init`, because `scenario.json` lists `"image"` in `requires`. It is 1 MiB: a text header followed by a fixed byte pattern, identical on every run and every machine. It is not a bootable disk. Nothing is downloaded. The file is gitignored; only `test/images/.gitkeep` is tracked.

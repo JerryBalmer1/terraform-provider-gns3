@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+# generic: copy to any Invoke-Build repo
+# Runs the build before git push (Git for Windows runs this under its bash). Enable it once per
+# clone with `Invoke-Build Setup`, which sets core.hooksPath=.githooks and hooks.rangeTask (the
+# repo's scenario task, the one that needs a live test environment).
+#
+#   any tag pushed        -> Invoke-Build Release   (the full chain)
+#   branch main pushed    -> Invoke-Build Lint, Test, <hooks.rangeTask>
+#   any other branch      -> Invoke-Build Lint, Test
+#
+# A failing task blocks the push and is named. PRE_PUSH_DRY_RUN=1 prints the tasks and exits 0.
+# git passes "<local ref> <local sha> <remote ref> <remote sha>" per ref on stdin.
+
+set -u
+root="$(git rev-parse --show-toplevel)" || exit 1
+zero='0000000000000000000000000000000000000000'
+
+level=0 # 0 nothing to check, 1 branch, 2 main, 3 tag
+while read -r local_ref local_sha remote_ref remote_sha; do
+    # Deleting a remote ref pushes nothing to check.
+    if [ "$local_sha" = "$zero" ]; then continue; fi
+    case "$remote_ref" in
+        refs/tags/*) want=3 ;;
+        refs/heads/main) want=2 ;;
+        *) want=1 ;;
+    esac
+    if [ "$want" -gt "$level" ]; then level=$want; fi
+done
+
+case "$level" in
+    0) exit 0 ;;
+    3) tasks=(Release) ;;
+    2)
+        range="$(git config --get hooks.rangeTask)"
+        if [ -z "$range" ]; then
+            echo "pre-push: git config hooks.rangeTask is not set, so the push to main cannot run the scenario task. Run: Invoke-Build Setup" >&2
+            exit 1
+        fi
+        tasks=(Lint Test "$range")
+        ;;
+    *) tasks=(Lint Test) ;;
+esac
+
+if [ "${PRE_PUSH_DRY_RUN:-}" = "1" ]; then
+    echo "pre-push (dry run): would run Invoke-Build ${tasks[*]}"
+    exit 0
+fi
+
+if ! command -v pwsh >/dev/null 2>&1; then
+    echo "pre-push: pwsh is not on PATH; cannot run Invoke-Build ${tasks[*]}. Push blocked." >&2
+    exit 1
+fi
+
+for task in "${tasks[@]}"; do
+    echo "pre-push: Invoke-Build $task"
+    if ! pwsh -NoProfile -NonInteractive -Command "Invoke-Build -Task '$task' -File '$root/.build.ps1'; exit [int](-not \$?)"; then
+        echo "pre-push: Invoke-Build $task failed. Push blocked." >&2
+        exit 1
+    fi
+done
+echo "pre-push: Invoke-Build ${tasks[*]} passed."

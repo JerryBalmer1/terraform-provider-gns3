@@ -2,6 +2,32 @@
 
 Maintained by hand. GoReleaser does not generate release notes (`changelog.disable: true`).
 
+## Unreleased
+
+No provider changes.
+
+Agent and contributor tooling:
+
+- Skills under `.claude/skills/`: `build-and-verify`, `release-prep`, `docs` and `report-template` (generic, for any Invoke-Build repo), plus `probe` and `add-scenario` (this repo).
+- `.claude/settings.json`: a PreToolUse hook (`.claude/hooks/block-git-write.ps1`) blocks agent shell commands that run `git commit`, `git push` or `git tag`. `git tag -l` and `git tag --list` are allowed.
+- `.githooks/pre-push` runs the build before a push: `Invoke-Build Release` when a tag is pushed, `Lint`, `Test` and `Gns3Range` for `main`, and `Lint` and `Test` for any other branch. A failing task blocks the push.
+- `CLAUDE.md` gains generic working rules: when to stop and ask, edit and stage only, the report template, and reporting tooling gaps.
+
+Build (`.build.ps1`):
+
+- New `Setup` task: sets `core.hooksPath=.githooks` and `hooks.rangeTask=Gns3Range` in this clone's git config.
+- New `Test-Docs` task, also run in CI after the docs step. It fails on any relative link or image in a `.md` that does not resolve, and on any page under `docs/` or `test/scenarios/` without an `Up:` line. The generated Registry pages are exempt from the `Up:` rule.
+- New `Release` task: `Lint`, `Test`, `Gns3Range -Dev` and `Test-Docs`, then a check that `docs/screenshots` has no uncommitted changes.
+- `Gns3Range` runs `terraform init -upgrade`. It fails a scenario without applying or destroying when its state still holds resources from an earlier run.
+- New `Gns3Range -Dev`: runs the scenarios with a `go build` of the checkout through a `dev_overrides` CLI config of its own, skips the lock-file version check and prints `DEV BUILD` in the summary.
+- New `Gns3Range -Capture`: a stub that prints "capture not implemented". `docs/screenshots/` is tracked for it.
+- The script now loads on Linux (CI): its temp and Program Files paths no longer assume Windows environment variables.
+
+Docs:
+
+- Hand-written pages under `docs/` and each scenario README have `Up:` and `See also:` lines. `test/scenarios/README.md` lists the scenarios.
+- `templates/` holds the tfplugindocs default templates, unchanged.
+
 ## 0.2.0 - 2026-10-15
 
 `gns3_node`:

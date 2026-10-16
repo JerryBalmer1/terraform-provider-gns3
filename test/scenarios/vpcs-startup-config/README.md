@@ -1,5 +1,9 @@
 # vpcs-startup-config
 
+Up: [Scenario tests](../README.md)
+
+See also: [image-upload](../image-upload/README.md), [project-only](../project-only/README.md), [two-nodes-one-link](../two-nodes-one-link/README.md)
+
 Builds a project `tf-scenario-vpcs-startup-config` with two VPCS nodes from the built-in `VPCS` template, `PC1` at (-150, 0) and `PC2` at (150, 0), joined by one `gns3_link` between their first ports. Each node sets `startup_config = file(...)`: `pc1.vpc` (`set pcname PC1`, `ip 10.0.0.1/24`) and `pc2.vpc` (`set pcname PC2`, `ip 10.0.0.2/24`). The provider writes each one to the node's `startup.vpc`. The nodes are not started.
 
 ## What checks.ps1 verifies

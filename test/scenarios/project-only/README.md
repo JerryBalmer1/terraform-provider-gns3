@@ -1,5 +1,9 @@
 # project-only
 
+Up: [Scenario tests](../README.md)
+
+See also: [image-upload](../image-upload/README.md), [two-nodes-one-link](../two-nodes-one-link/README.md), [vpcs-startup-config](../vpcs-startup-config/README.md)
+
 Builds one empty `gns3_project` named `tf-scenario-project-only`, with `grid_size = 50`, a 3000 × 1500 scene and the grid shown.
 
 ## What checks.ps1 verifies
