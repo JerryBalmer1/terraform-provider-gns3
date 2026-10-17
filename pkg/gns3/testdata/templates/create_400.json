@@ -1,0 +1,31 @@
+{
+  "_header": "recorded from GNS3 2.2.61 on 2026-10-16",
+  "_source": "https://gns3-server.readthedocs.io/en/stable/api/v2/controller/template/templates.html",
+  "_notes": "A key the vpcs template schema does not have.",
+  "request": {
+    "method": "POST",
+    "path": "/v2/templates",
+    "body": {
+      "compute_id": "local",
+      "name": "tf-fixture-bad",
+      "ram": 256,
+      "template_type": "vpcs"
+    }
+  },
+  "response": {
+    "status": 400,
+    "body": {
+      "message": "JSON schema error adding template with JSON data '{'compute_id': 'local', 'name': 'tf-fixture-bad', 'ram': 256, 'template_type': 'vpcs', 'template_id': '3c5bacbe-1b90-4cfc-987f-2185afca608f'}': Additional properties are not allowed ('ram' was unexpected)",
+      "method": "POST",
+      "path": "/v2/templates",
+      "request": {
+        "compute_id": "local",
+        "name": "tf-fixture-bad",
+        "ram": 256,
+        "template_id": "3c5bacbe-1b90-4cfc-987f-2185afca608f",
+        "template_type": "vpcs"
+      },
+      "status": 400
+    }
+  }
+}

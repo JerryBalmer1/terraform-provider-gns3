@@ -35,7 +35,7 @@ $s = (terraform providers schema -json | ConvertFrom-Json).provider_schemas.'reg
 Pop-Location; Remove-Item -Recurse -Force $d
 ```
 
-Expect: `0.2.0`, then `resources:    gns3_image, gns3_link, gns3_node, gns3_project` and `data sources: gns3_compute, gns3_image, gns3_project, gns3_template, gns3_version` (seen 2026-10-15; `gns3_image` added in both lists; version bumped to 0.2.0 on 2026-10-15).
+Expect: `0.2.0`, then `resources:    gns3_image, gns3_link, gns3_node, gns3_project, gns3_template` and `data sources: gns3_compute, gns3_image, gns3_project, gns3_template, gns3_version` (seen 2026-10-16; `gns3_template` added to the resources on 2026-10-16; `gns3_image` added in both lists and version bumped to 0.2.0 on 2026-10-15).
 
 Tests: none (the schema listing is not asserted in Go; `TestExamples` loads every resource type)
 
@@ -276,7 +276,7 @@ $g.Nodes | Group-Object Kind | Select-Object Count, Name
 Remove-Item -Recurse -Force $d
 ```
 
-Expect: `Nodes: 93`, `Edges: 92`, grouped as 82 Attribute, 1 Block, 5 DataSource, 1 Provider, 4 Resource (seen 2026-10-15 with the `gns3_image` resource and data source; before them it was 77 nodes and 76 edges, seen 2026-10-07 against TerraformGraph 0.14.0). No GNS3 server is needed. `Get-TerraformProviderSchema -Path` never runs `terraform init`, which would fail under a dev override.
+Expect: `Nodes: 104`, `Edges: 103`, grouped as 92 Attribute, 1 Block, 5 DataSource, 1 Provider, 5 Resource (seen 2026-10-16 with the `gns3_template` resource; before it, 93 nodes and 92 edges with 82 Attribute and 4 Resource, seen 2026-10-15 with the `gns3_image` resource and data source; before those, 77 nodes and 76 edges, seen 2026-10-07 against TerraformGraph 0.14.0). TerraformGraph may first print a line suggesting `Install-TerraformGraphSkill`; it does not affect the counts. No GNS3 server is needed. `Get-TerraformProviderSchema -Path` never runs `terraform init`, which would fail under a dev override.
 
 Tests: none
 
@@ -302,7 +302,7 @@ Set-Location 'C:\__Code\terraform-provider-gns3'
 Invoke-Build TestAcc -AutoStart
 ```
 
-Expect: eleven `--- PASS: TestAcc…` lines (`TestAccComputeDataSource`, `TestAccImageDataSource`, `TestAccImageResource`, `TestAccImageResourceSourceURL`, `TestAccLinkResource`, `TestAccNodeResource`, `TestAccProjectDataSource`, `TestAccProjectResource`, `TestAccExamples`, `TestAccTemplateDataSource`, `TestAccVersionDataSource`). `TestAccExamples` passes `gns3_link`, `gns3_node` and `gns3_project`, and skips `gns3_image` with "example not applied: downloads a ~612 MiB VyOS ISO …". Then `ok  github.com/JerryBalmer1/terraform-provider-gns3/internal/provider` and `Acceptance tests passed. Log: …\acc-run-<timestamp>.log` (seen 2026-10-15 against GNS3 2.2.61; the test binary took 33 s). The three image tests leave `tf-acc-image*.img` files in the server's QEMU images folder, because GNS3 2.2 cannot delete images. With `-AutoStart` that folder is `$env:TEMP\gns3\data\images\QEMU`.
+Expect: fourteen `--- PASS: TestAcc…` lines (`TestAccComputeDataSource`, `TestAccImageDataSource`, `TestAccImageResource`, `TestAccImageResourceSourceURL`, `TestAccLinkResource`, `TestAccNodeResource`, `TestAccNodeStartupConfig`, `TestAccProjectDataSource`, `TestAccProjectResource`, `TestAccExamples`, `TestAccTemplateDataSource`, `TestAccTemplateResourceVpcs`, `TestAccTemplateResourceQemu`, `TestAccVersionDataSource`) and one `--- SKIP: TestAccNodeStartupConfigDynamips` ("no Dynamips template on the server: add an IOS router template …") on a server without an IOS router template. `TestAccExamples` passes `gns3_link`, `gns3_node`, `gns3_project` and `gns3_template`, and skips `gns3_image` with "example not applied: downloads a ~612 MiB VyOS ISO …". Then `ok  github.com/JerryBalmer1/terraform-provider-gns3/internal/provider` and `Acceptance tests passed. Log: …\acc-run-<timestamp>.log` (seen 2026-10-16 against GNS3 2.2.61; the test binary took 50 s. On 2026-10-15, before `gns3_template` and with `TestAccNodeStartupConfig` not yet listed here, it was eleven passes in 33 s). The three image tests leave `tf-acc-image*.img` files in the server's QEMU images folder, because GNS3 2.2 cannot delete images. With `-AutoStart` that folder is `$env:TEMP\gns3\data\images\QEMU`.
 
 Tests: every TestAcc* test
 ### 1.10 Images on a compute
@@ -370,3 +370,55 @@ $gns3 = "http://$(if ($env:GNS3_HOST) { $env:GNS3_HOST } else { '127.0.0.1' }):$
 Expect: `md5 of the source: <md5>`. Apply plans `gns3_image.check` with `md5sum` already set to that MD5 and `path` and `filesize` known after apply. It ends `Apply complete! Resources: 1 added, 0 changed, 0 destroyed.` with `listed = "tf-check-<timestamp>.img 46 <md5>"`. `terraform plan` prints `No changes.` Destroy prints the warning `GNS3 image left on the compute` ("GNS3 2.2 has no API to delete images, so \"tf-check-<timestamp>.img\" stays in the qemu images folder on compute \"local\" … It was removed from Terraform state only.") and ends `Destroy complete! Resources: 1 destroyed.` The last line is `still on the compute after destroy: True`. Delete the file from the compute's QEMU images folder by hand if needed (seen 2026-10-15 against GNS3 2.2.61).
 
 Tests: "TestImageResource", "TestImageDataSource", "TestAccImageResource", "TestAccImageDataSource"
+
+### 1.12 gns3_template create, property update, delete, built-in refusal
+
+Creates a user VPCS template with `gns3_template`, changes one property in place, reads it back from the API, tries to import the built-in VPCS template, destroys, and shows the template is gone. Starts nothing.
+
+```powershell
+Set-Location 'C:\__Code\terraform-provider-gns3'
+go install .
+$bin = go env GOBIN; if (-not $bin) { $bin = Join-Path (go env GOPATH) 'bin' }
+$env:TF_CLI_CONFIG_FILE = Join-Path $env:TEMP 'gns3-dev.tfrc'
+@"
+provider_installation {
+  dev_overrides {
+    "JerryBalmer1/gns3" = "$($bin -replace '\\', '/')"
+  }
+  direct {}
+}
+"@ | Set-Content -Path $env:TF_CLI_CONFIG_FILE -Encoding ascii
+$d = Join-Path $env:TEMP 'gns3-check-1.12'; New-Item -ItemType Directory -Force $d | Out-Null
+Copy-Item .\examples\provider\provider.tf $d
+$gns3 = "http://$(if ($env:GNS3_HOST) { $env:GNS3_HOST } else { '127.0.0.1' }):$(if ($env:GNS3_PORT) { $env:GNS3_PORT } else { 3080 })"
+function Write-Check($ConsoleType) {
+@"
+resource "gns3_template" "check" {
+  name          = "tf-check-template"
+  template_type = "vpcs"
+  properties    = jsonencode({ console_type = "$ConsoleType" })
+}
+
+resource "gns3_template" "builtin" {
+  name          = "VPCS"
+  template_type = "vpcs"
+}
+"@ | Set-Content -Path (Join-Path $d 'main.tf') -Encoding ascii
+}
+Push-Location $d
+Write-Check 'none'
+terraform apply -auto-approve -target gns3_template.check
+$id = (terraform state show -no-color gns3_template.check | Select-String 'template_id\s+=\s+"([^"]+)"').Matches[0].Groups[1].Value
+"console_type on the server: " + (Invoke-RestMethod "$gns3/v2/templates/$id").console_type
+Write-Check 'telnet'
+terraform apply -auto-approve -target gns3_template.check
+"console_type on the server: " + (Invoke-RestMethod "$gns3/v2/templates/$id").console_type
+terraform import gns3_template.builtin 19021f99-e36f-394d-b4a1-8aaa902ab9cc
+terraform destroy -auto-approve -target gns3_template.check
+Pop-Location; Remove-Item -Recurse -Force $d
+"template left after destroy: " + [bool](Invoke-RestMethod "$gns3/v2/templates" | ForEach-Object { $_ } | Where-Object template_id -eq $id)
+```
+
+Expect: the first apply plans `gns3_template.check` with `properties = jsonencode({ console_type = "none" })`, `compute_id = "local"` and the other attributes known after apply, and ends `Apply complete! Resources: 1 added, 0 changed, 0 destroyed.`, then `console_type on the server: none`. The second apply shows `~ console_type = "none" -> "telnet"` as an in-place update and ends `Resources: 0 added, 1 changed, 0 destroyed.`, then `console_type on the server: telnet`. The import fails with `Error: Built-in GNS3 template` ("Template \"VPCS\" (19021f99-e36f-394d-b4a1-8aaa902ab9cc) ships with GNS3 and cannot be managed by gns3_template: GNS3 refuses to delete it (HTTP 409). …"). Destroy shows `category = "guest"`, `default_name_format = "PC{0}"` and `symbol = ":/symbols/vpcs_guest.svg"` filled in by the server and ends `Destroy complete! Resources: 1 destroyed.` The last line is `template left after destroy: False`. Every apply and the destroy also print the "Resource targeting is in effect" warnings, because `-target` keeps the built-in block out of them (seen 2026-10-16 against GNS3 2.2.61).
+
+Tests: "TestTemplateResourceVpcs", "TestAccTemplateResourceVpcs", "TestTemplateResourceQemu", "TestAccTemplateResourceQemu", "TestDeleteBuiltinTemplate"

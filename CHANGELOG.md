@@ -4,7 +4,26 @@ Maintained by hand. GoReleaser does not generate release notes (`changelog.disab
 
 ## Unreleased
 
-- `gns3_node`: the qemu `startup_config` error now explains that GNS3 2.2 config disks don't work on Windows and points to Ansible or cloud-init.
+New resource `gns3_template`:
+
+- Manages a user template: `name`, `template_type`, `compute_id` (default `local`) and `properties`, a JSON object of type-specific fields (`ram`, `adapters`, `hda_disk_image`, ...) where only the keys you set are compared with the server. `template_id`, `builtin`, `category`, `symbol` and `default_name_format` are read from the server. Import by `template_id`.
+- `gns3_node.template_id` can reference `gns3_template.<name>.template_id`.
+- `name` and `properties` change in place. `template_type` and `compute_id` force a new template, because GNS3 2.2 ignores them in an update. GNS3 2.2 does not check type-specific keys in an update either, so a `properties` change is first tried on a throwaway template (`tf-validate-<random>`, deleted straight away) and refused if GNS3 rejects it.
+- At plan time, `dynamips` needs `properties.platform` and `properties.image`, `docker` needs `properties.image`, and common fields in `properties` are refused. Built-in templates can't be imported or managed.
+- What GNS3 2.2.61 does on template create, update and delete is in `docs/api-drift.md` ("Template create, update and delete (2.2.61)").
+- `pkg/gns3`: `TemplatesAPI` gains `CreateTemplate`, `UpdateTemplate` and `DeleteTemplate`, and `Template.Properties` holds the type-specific keys.
+- **Breaking** (`pkg/gns3` only, not the provider): `gns3.Template` has a new map field, `Properties`, so Go code that compares two `Template` values with `==` or uses one as a map key no longer compiles. Code outside this module that implements `TemplatesAPI` must add the three new methods.
+
+Lab template and tests:
+
+- New `lab-template/`: a root module to copy for your own lab (project, a `gns3_template`, two nodes with startup configs from `configs/`, one link), with a README. `Test-Docs` now requires `Up:` lines under `lab-template/` too.
+- New scenario `template-roundtrip`: a vpcs `gns3_template` and one node created from it. It sets `minVersion` 0.3.0, so published runs skip it until the pins are bumped.
+- `scenario.json` takes an optional `minVersion`. A published `Gns3Range` skips a scenario whose `main.tf` pins a lower provider version (`SKIP`, "requires provider >= X, pinned Y"); a skip does not fail the run. `-Dev` ignores it. The summary line counts skipped scenarios.
+- New example `examples/resources/gns3_template`, applied by `TestExamples` and `TestAccExamples`.
+
+`gns3_node`:
+
+- The qemu `startup_config` error now explains that GNS3 2.2 config disks don't work on Windows and points to Ansible or cloud-init.
 
 Agent and contributor tooling:
 

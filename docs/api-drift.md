@@ -81,6 +81,37 @@ Property: `create_config_disk` on `POST /v2/compute/projects/{project_id}/qemu/n
   - **Not seen:** a config disk being built or attached, and whether VyOS reads anything from it. On this host the feature is off (no `config.img`, no mtools), qemu can't start (no HAXM), and no VyOS image is on the server. That needs a GNS3 VM or Linux compute with mtools and KVM, and a VyOS qcow2.
 - **Client now:** unchanged. `startup_config` on `qemu` is still refused at plan time.
 
+### Template create, update and delete (2.2.61)
+
+Endpoints: `POST /v2/templates` ([docs](https://gns3-server.readthedocs.io/en/stable/api/v2/controller/template/templates.html)), `GET`/`PUT`/`DELETE /v2/templates/{template_id}` ([docs](https://gns3-server.readthedocs.io/en/stable/api/v2/controller/template/templatestemplateid.html)). Probed on 2026-10-16 (`GET /v2/version` 2.2.61, `local: true`), on the server already running on port 3080 from an earlier `Invoke-Build Gns3Start` (PID 150704, config and data under `$env:TEMP\gns3`). Every template was named `tf-probe-*`, and every one was deleted afterwards. So were the throwaway projects `tf-probe-tpl` and `tf-probe-tpl2`. Nothing was started.
+
+- **Docs:** POST requires `name`, `template_type` and `compute_id` (`null` or a string); `builtin`, `category`, `default_name_format`, `symbol` and `template_id` are optional, and the qemu sample adds type-specific keys (`ram`, `platform`, `hda_disk_image`) at the top level. PUT takes the same fields, none required, and answers 200, 400 or 404. DELETE answers 204, 400 or 404.
+- **2.2.61, create:**
+  - `name`, `template_type` and `compute_id` are required for every type (400 `'compute_id' is a required property`, and likewise for the others). `compute_id: null` and an unknown compute (`"nosuch"`) are both accepted and stored as given.
+  - Type-specific requirements the docs don't list: `dynamips` needs `platform` (one of `c7200, c3745, c3725, c3600, c2691, c2600, c1700`) and then `image`; `docker` needs `image`. `vpcs` and `qemu` need nothing more.
+  - Type-specific keys go at the top level, as in the docs sample, and are checked against a per-type schema: an unknown key gives 400 `Additional properties are not allowed ('ram' was unexpected)` (vpcs, qemu, docker, dynamips), and a wrong type gives 400 `'lots' is not of type 'integer'` (qemu `ram`).
+  - `category` must be one of the enum values (`nope` gives 400). `builtin: true` is accepted and ignored: the template comes back `builtin: false`. Two templates may share a name.
+  - The server fills in every type-specific default and returns a flat object. A minimal vpcs template comes back with `base_script_file: "vpcs_base_config.txt"`, `category: "guest"`, `console_auto_start: false`, `console_type: "telnet"`, `default_name_format: "PC{0}"` and `symbol: ":/symbols/vpcs_guest.svg"`. A minimal qemu template comes back with 42 keys (`ram: 256`, `adapters: 1`, `adapter_type: "e1000"`, `default_name_format: "{name}-{0}"`, `symbol: ":/symbols/qemu_guest.svg"`, ...). dynamips defaults to `category: "router"` and `default_name_format: "R{0}"`. docker defaults to `default_name_format: "{name}-{0}"` and `symbol: ":/symbols/docker_guest.svg"`.
+- **2.2.61, update (PUT):**
+  - Only the common fields are validated: `name` must be a non-empty string (`''` and `null` give 400), and `category` must be in the enum. **No PUT of a type-specific key returned 400**, for any of the four types: an unknown key (`bogus_prop: 1`) and a wrongly typed value (`ram: "lots"` on qemu) are both stored and returned.
+  - A key that is stored this way breaks the template later. `POST /v2/projects/{project_id}/templates/{template_id}` on a vpcs template that has `ram: 256` and `bogus_prop: 1` fails with 400 from the compute: `Additional properties are not allowed ('ram', 'bogus_prop' were unexpected)`.
+  - PUT merges: keys left out of the body keep their values, so a key can't be removed again.
+  - `template_type`, `compute_id`, `template_id` and `builtin` in a PUT body answer 200, but **nothing changes**: the response and a later GET still show the old values.
+  - `name`, `category`, `symbol`, `default_name_format`, `console_type` and the type-specific keys (vpcs `base_script_file`, qemu `ram` and `adapters`, dynamips `platform` and `ram`, docker `image` and `adapters`) change in place, and the response shows the new values.
+- **2.2.61, delete and built-ins:**
+  - DELETE of a user template answers 204. A second DELETE answers 404 `Template ID <id> doesn't exist`.
+  - DELETE of a built-in (VPCS, `19021f99-e36f-394d-b4a1-8aaa902ab9cc`) answers **409** `Template ID ... cannot be deleted because it is a builtin`, a status the docs don't list. The template is still there afterwards.
+  - Built-ins come back in a different shape from user templates: the type-specific keys sit under a `properties` object (VPCS: `"properties": {"base_script_file": "vpcs_base_config.txt"}`), and `compute_id` is `null`.
+  - A node created from a template keeps working once the template is deleted. GET and a rename both succeed, and the node still reports the deleted `template_id`.
+- **Client now:** `TemplatesAPI` has `CreateTemplate`, `UpdateTemplate` and `DeleteTemplate`. `gns3.Template` puts every key that isn't a common field into `Properties`, from either shape. The `gns3_template` resource (`internal/provider/template_resource.go`) follows what Jerry decided on 2026-10-16:
+  - `template_type` and `compute_id` force replacement, because an update ignores them.
+  - A change to `properties` is checked first with a throwaway `POST /v2/templates` named `tf-validate-<random>`, deleted straight afterwards; only then is the PUT sent. An error names a copy that could not be deleted.
+  - `dynamips` needs `properties.platform` and `properties.image`, and `docker` needs `properties.image`, at plan time. Common fields are refused in `properties`.
+  - Built-in templates are refused when read (import) and at plan time.
+  - A 404 on read removes the template from state; a 404 on delete counts as gone.
+
+  `TestTemplateResourceVpcs`/`TestAccTemplateResourceVpcs` (rename and property change in place, `ram` on vpcs rejected by the trial create with the template unchanged, import, built-in import refused) and `TestTemplateResourceQemu`/`TestAccTemplateResourceQemu` (create, `ram` change in place, `ram = "lots"` rejected, import, `template_type` change replaces; no node, nothing started) passed against 2.2.61 on 2026-10-16.
+
 ### Project DELETE races the emulator process on Windows
 
 Endpoint: `DELETE /v2/projects/{project_id}` ([docs](https://gns3-server.readthedocs.io/en/stable/api/v2/controller/project/projectsprojectid.html)).

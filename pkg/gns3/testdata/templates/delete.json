@@ -1,0 +1,11 @@
+{
+  "_header": "recorded from GNS3 2.2.61 on 2026-10-16",
+  "_source": "https://gns3-server.readthedocs.io/en/stable/api/v2/controller/template/templatestemplateid.html",
+  "request": {
+    "method": "DELETE",
+    "path": "/v2/templates/5bb744cc-7ef9-49c0-a50a-c383d00bf3d5"
+  },
+  "response": {
+    "status": 204
+  }
+}

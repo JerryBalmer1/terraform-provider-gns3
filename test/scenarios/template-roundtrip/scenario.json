@@ -1,0 +1,6 @@
+{
+  "name": "template-roundtrip",
+  "description": "A user vpcs gns3_template and one node created from it; destroy removes both.",
+  "requires": ["server"],
+  "minVersion": "0.3.0"
+}

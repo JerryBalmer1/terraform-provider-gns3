@@ -79,6 +79,7 @@ A value set in the provider block wins over its environment variable, and the en
 | Resource | `gns3_node` | [docs/resources/node.md](docs/resources/node.md) |
 | Resource | `gns3_link` | [docs/resources/link.md](docs/resources/link.md) |
 | Resource | `gns3_image` | [docs/resources/image.md](docs/resources/image.md) |
+| Resource | `gns3_template` | [docs/resources/template.md](docs/resources/template.md) |
 | Data source | `gns3_template` | [docs/data-sources/template.md](docs/data-sources/template.md) |
 | Data source | `gns3_compute` | [docs/data-sources/compute.md](docs/data-sources/compute.md) |
 | Data source | `gns3_project` | [docs/data-sources/project.md](docs/data-sources/project.md) |
@@ -133,6 +134,7 @@ resource "gns3_link" "pc1_pc2" {
 - `start_on_create` only acts when the node is created. Use the GNS3 GUI or API to start and stop nodes after that (see "Not here yet").
 - `ports` is read back from the server after create, so `gns3_link` can reference `gns3_node.x.ports[n]`.
 - `gns3_image` uploads a qemu, iou or dynamips image from `source_url` or `source_path`, checking `md5sum` first when it is set. **Destroying it leaves the file on the compute**: GNS3 2.2 has no API to delete images, so destroy only removes it from state and warns. A file of the same name with different content is never overwritten at create. Docker images are not covered; GNS3 pulls them itself.
+- `gns3_template` manages a user template; its type-specific fields go in `properties` as JSON. GNS3 2.2 does not check those in an update, so the provider tries a change on a throwaway template first. Built-in templates stay with the `gns3_template` data source. To start a lab of your own, copy [lab-template/](lab-template/README.md).
 
 ## Local development loop
 
@@ -228,7 +230,6 @@ fmt.Println(v.Version)
 
 | Feature | Why |
 |---|---|
-| `gns3_template` resource | Template bodies differ by emulator type (qemu, iou, dynamips, docker, ...), so each needs its own schema. 0.1.0 reads templates with the data source only. |
 | `gns3_drawing` | Not needed for topology. Drawings are SVG blobs with their own endpoints. |
 | Snapshots | Snapshot create and restore are actions rather than desired state, and restore rewrites every node. They need a design first. |
 | Project export/import | These are file transfers (`/export`, `/import` stream a .gns3project archive), not resources. |

@@ -100,6 +100,8 @@ func (e testEnv) checkGone(resourceType string) resource.TestCheckFunc {
 				_, err = e.client.GetNode(ctx, a["project_id"], a["node_id"])
 			case "gns3_link":
 				_, err = e.client.GetLink(ctx, a["project_id"], a["link_id"])
+			case "gns3_template":
+				_, err = e.client.GetTemplate(ctx, a["template_id"])
 			}
 			if err == nil {
 				return fmt.Errorf("%s %s still exists", resourceType, rs.Primary.Attributes)

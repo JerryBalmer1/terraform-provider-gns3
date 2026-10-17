@@ -100,7 +100,7 @@ func (r *nodeResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 			},
 			"template_id": schema.StringAttribute{
 				Optional:            true,
-				MarkdownDescription: "Template UUID to create the node from, for example from the `gns3_template` data source. Changing it replaces the node.",
+				MarkdownDescription: "Template UUID to create the node from: `template_id` of a `gns3_template` resource (a template the configuration manages) or data source (a built-in or existing one). Changing it replaces the node.",
 				PlanModifiers:       []planmodifier.String{stringplanmodifier.RequiresReplace()},
 			},
 			"node_type": schema.StringAttribute{

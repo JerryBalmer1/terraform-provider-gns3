@@ -29,7 +29,7 @@ Repo-specific:
 ```
 main.go                       providerserver.Serve, -debug and -version flags
 internal/provider/            provider.go (schema, config resolution, shared helpers)
-  <name>_resource.go          gns3_project, gns3_node, gns3_link, gns3_image
+  <name>_resource.go          gns3_project, gns3_node, gns3_link, gns3_image, gns3_template
   <name>_data_source.go       gns3_template, gns3_compute, gns3_project, gns3_version, gns3_image
   *_test.go                   Test* run against fakeserver_test.go with resource.UnitTest;
                               TestAcc* run the same steps against a live server (TF_ACC=1)
@@ -49,6 +49,8 @@ examples/                     provider/provider.tf, resources/<type>/resource.tf
                               data-sources/<type>/data-source.tf; feed docs and TestExamples
 test/scenarios/<name>/        scenario tests run by Invoke-Build Gns3Range (see "Scenario tests")
 test/images/                  images generated for scenarios (only .gitkeep is tracked)
+lab-template/                 a root module users copy to start a lab (project, gns3_template, two nodes with
+                              configs/ startup configs, one link); Test-Docs checks it, TestExamples doesn't apply it
 tools/tools.go                pins tfplugindocs (build tag tools)
 .github/workflows/            ci.yml (push to main, PRs: build, vet, gofmt, staticcheck, unit tests,
                               docs drift; no TF_ACC), release.yml (v* tag: GPG import, goreleaser).
@@ -70,7 +72,7 @@ templates/                    generic tfplugindocs templates (see above)
 .githooks/pre-push            build before push; enabled by Invoke-Build Setup
 ```
 
-`.build.ps1` also has `Test-Docs` (relative links in every .md resolve; `Up:` on every page under `docs/` and `test/scenarios/` except the generated Registry pages; run in CI), `Release` (Lint, Test, `Gns3Range -Dev`, Test-Docs, clean `docs/screenshots`) and `Setup` (git hooks path). `docs/screenshots/` (tracked through `.gitkeep`) is for `Gns3Range -Capture`, which is a stub that prints "capture not implemented".
+`.build.ps1` also has `Test-Docs` (relative links in every .md resolve; `Up:` on every page under `docs/`, `test/scenarios/` and `lab-template/` except the generated Registry pages; run in CI), `Release` (Lint, Test, `Gns3Range -Dev`, Test-Docs, clean `docs/screenshots`) and `Setup` (git hooks path). `docs/screenshots/` (tracked through `.gitkeep`) is for `Gns3Range -Capture`, which is a stub that prints "capture not implemented".
 
 ## Client design
 
@@ -82,6 +84,7 @@ templates/                    generic tfplugindocs templates (see above)
 - Computed-only attributes use `UseStateForUnknown`. When an in-place update can change one (node `ports`/`console` after `properties` or `console_type` changes, project `filename` on rename), `ModifyPlan` marks it unknown, so apply never contradicts the plan.
 - After a fresh apply of any example, the plan must be empty (`TestExamples`, `TestAccExamples`).
 - Node ports are read back with `GET` after create.
+- `gns3_template`: GNS3 2.2 ignores `template_type` and `compute_id` in a PUT (so they force replacement) and doesn't check type-specific keys in one, so a `properties` change is first tried on a throwaway `POST /v2/templates` (`tf-validate-<random>`) that is deleted straight away. Built-in templates are refused. See `docs/api-drift.md`.
 
 ## Local dev loop
 
@@ -129,7 +132,8 @@ Acceptance tests and manual-check-list section 1 need a GNS3 server: `Invoke-Bui
 ```
 test/scenarios/<name>/
   scenario.json   { "name", "description", "requires": ["server"] or ["server","image"],
-                    optional "inspect": [{ "node", "command", "expect" }] printed by -Inspect }
+                    optional "inspect": [{ "node", "command", "expect" }] printed by -Inspect,
+                    optional "minVersion": "X.Y.Z" (see below) }
   main.tf         a real root module: source "JerryBalmer1/gns3", version "0.2.0", empty provider block
   checks.ps1      param(-Server <base URL>, -Outputs <hashtable: output name -> value>); calls the
                   GNS3 v2 API with Invoke-RestMethod and throws a clear message on any mismatch
@@ -142,6 +146,7 @@ test/images/      files generated at run time for "image" scenarios; only .gitke
   - **`-Dev`:** `go build`s this checkout to `$env:TEMP\gns3\dev-provider`, adds `dev_overrides { "JerryBalmer1/gns3" = <that dir> }` before `direct {}`, skips the lock-file assert and prints `DEV BUILD` in the summary header. This proves unreleased code; `Release` runs it, because the version being tagged is not on the Registry yet.
   Never use a filesystem mirror.
 - **Inspect and Destroy** (one scenario only, `-Scenario <name>` required; `-Dev` works with both). `-Inspect` runs init, the stale-state check, apply, output and `checks.ps1`, skips destroy, starts every node (`POST /v2/projects/{project_id}/nodes/start`), opens the project's `.gns3` file in gns3.exe (or prints the web UI address `/static/web-ui/bundled` when gns3.exe is missing or the server is remote; when gns3.exe is already running it is not started again and the block says File > Open project), leaves the server running and prints a numbered "what to do now" block: `telnet://host:port` per node from the API, the `inspect` commands, and the `-Destroy` command. It writes `$env:TEMP\gns3\inspect\<name>.json` recording whether it started the server. `-Destroy` runs init and destroy with no stale-state refusal and no lock-file check, requires an empty `state list`, removes `terraform.tfstate` and its backup, deletes the marker, and stops the server only when the marker says `-Inspect` started it (same PID) and no other marker is left. The summary table's `Action` column says `run`, `inspect` or `destroy`. Never end a task with a scenario still inspected. [docs/manual-steps.md](docs/manual-steps.md) says which manual steps stay manual and why.
+- **`minVersion`** in `scenario.json` is the first provider release that has what the scenario uses. A published run skips the scenario (Result `SKIP`, message `requires provider >= X, pinned Y`) when the `version` its `main.tf` pins for `JerryBalmer1/gns3` is lower; a skip does not fail the run. `-Dev` ignores it. Set it on a scenario for an unreleased feature and leave the pin at the published version: release-prep bumps the pins and the skip goes away.
 - `requires: "image"` makes `Gns3Range` write `test/images/scenario-dummy.img` before init. Its bytes never change, because GNS3 2.2 can't delete images and `gns3_image` refuses to upload over a different file of the same name.
 - In `checks.ps1`, unroll list responses (`Invoke-RestMethod ... | ForEach-Object { $_ }`): pwsh 7 writes a JSON array to the pipeline as one object.
 - **Adding a scenario.** When asked to add a scenario for a resource, attribute or behaviour not already covered, first read the provider schema (`internal/provider/<name>_resource.go` or `_data_source.go`) and its page under `docs/`. If what the scenario should assert is still unclear, stop and ask rather than invent expected values.

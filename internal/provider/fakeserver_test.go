@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/JerryBalmer1/terraform-provider-gns3/pkg/gns3"
 )
 
 // fakeGNS3 is an in-memory stand-in for a GNS3 2.2 controller, built from the
@@ -27,24 +29,28 @@ type fakeGNS3 struct {
 	t   *testing.T
 	srv *httptest.Server
 
-	mu       sync.Mutex
-	projects map[string]map[string]any
-	nodes    map[string]map[string]any    // node_id -> node
-	links    map[string]map[string]any    // link_id -> link
-	files    map[string]map[string]string // node_id -> path -> content
-	images   map[string]map[string][]byte // emulator -> filename -> content (compute local)
-	uploads  int
-	console  int64
-	dynamips int64 // last dynamips_id handed out
+	mu        sync.Mutex
+	templates map[string]map[string]any // template_id -> template, built-ins included
+	projects  map[string]map[string]any
+	nodes     map[string]map[string]any    // node_id -> node
+	links     map[string]map[string]any    // link_id -> link
+	files     map[string]map[string]string // node_id -> path -> content
+	images    map[string]map[string][]byte // emulator -> filename -> content (compute local)
+	uploads   int
+	console   int64
+	dynamips  int64 // last dynamips_id handed out
 
 	// lockedDeletes is how many project DELETEs still fail with the 409 a
 	// Windows server returns while an emulator holds a project file open.
 	lockedDeletes int
 }
 
+// fakeTemplates are the built-ins. 2.2.61 keeps a built-in's type-specific
+// keys under "properties" (docs/api-drift.md).
 var fakeTemplates = []map[string]any{
 	{"builtin": true, "category": "guest", "compute_id": nil, "default_name_format": "PC{0}", "name": "VPCS",
-		"symbol": ":/symbols/vpcs_guest.svg", "template_id": "19021f99-e36f-394d-b4a1-8aaa902ab9cc", "template_type": "vpcs"},
+		"symbol": ":/symbols/vpcs_guest.svg", "template_id": "19021f99-e36f-394d-b4a1-8aaa902ab9cc", "template_type": "vpcs",
+		"properties": map[string]any{"base_script_file": "vpcs_base_config.txt"}},
 	{"builtin": true, "category": "switch", "compute_id": nil, "console_type": "none", "default_name_format": "Switch{0}",
 		"name": "Ethernet switch", "symbol": ":/symbols/ethernet_switch.svg", "template_id": "1966b864-93e7-32d5-965f-001384eec461",
 		"template_type": "ethernet_switch"},
@@ -62,7 +68,10 @@ func newFakeGNS3(t *testing.T) *fakeGNS3 {
 	f := &fakeGNS3{
 		t: t, projects: map[string]map[string]any{}, nodes: map[string]map[string]any{},
 		links: map[string]map[string]any{}, files: map[string]map[string]string{}, console: 5000,
-		images: map[string]map[string][]byte{"qemu": {}, "dynamips": {}},
+		images: map[string]map[string][]byte{"qemu": {}, "dynamips": {}}, templates: map[string]map[string]any{},
+	}
+	for _, tpl := range fakeTemplates {
+		f.templates[tpl["template_id"].(string)] = maps.Clone(tpl)
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v2/version", func(w http.ResponseWriter, _ *http.Request) {
@@ -83,14 +92,24 @@ func newFakeGNS3(t *testing.T) *fakeGNS3 {
 		f.uploads++
 		reply(w, 200, map[string]any{})
 	}))
-	mux.HandleFunc("GET /v2/templates", func(w http.ResponseWriter, _ *http.Request) { reply(w, 200, fakeTemplates) })
-	mux.HandleFunc("GET /v2/templates/{id}", func(w http.ResponseWriter, r *http.Request) {
-		if tpl := findTemplate(r.PathValue("id")); tpl != nil {
-			reply(w, 200, tpl)
+	mux.HandleFunc("GET /v2/templates", func(w http.ResponseWriter, _ *http.Request) {
+		out := make([]any, 0, len(f.templates))
+		for _, id := range slices.Sorted(maps.Keys(f.templates)) {
+			out = append(out, f.templates[id])
+		}
+		reply(w, 200, out)
+	})
+	mux.HandleFunc("POST /v2/templates", f.createTemplate)
+	mux.HandleFunc("GET /v2/templates/{id}", f.withTemplate(func(w http.ResponseWriter, _ *http.Request, tpl map[string]any) { reply(w, 200, tpl) }))
+	mux.HandleFunc("PUT /v2/templates/{id}", f.withTemplate(f.updateTemplate))
+	mux.HandleFunc("DELETE /v2/templates/{id}", f.withTemplate(func(w http.ResponseWriter, _ *http.Request, tpl map[string]any) {
+		if tpl["builtin"] == true {
+			fail(w, 409, "Template ID %s cannot be deleted because it is a builtin", tpl["template_id"])
 			return
 		}
-		fail(w, 404, "Template ID %s doesn't exist", r.PathValue("id"))
-	})
+		delete(f.templates, tpl["template_id"].(string))
+		w.WriteHeader(204)
+	}))
 	mux.HandleFunc("GET /v2/projects", f.listProjects)
 	mux.HandleFunc("POST /v2/projects", f.createProject)
 	mux.HandleFunc("GET /v2/projects/{pid}", f.withProject(func(w http.ResponseWriter, _ *http.Request, p map[string]any) { reply(w, 200, p) }))
@@ -182,13 +201,141 @@ func newUUID() string {
 	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:])
 }
 
-func findTemplate(id string) map[string]any {
-	for _, t := range fakeTemplates {
-		if t["template_id"] == id {
-			return t
+// templateDefaults are the type-specific keys and defaults a 2.2.61 POST
+// /v2/templates fills in for a minimal template (seen on 2.2.61,
+// docs/api-drift.md), next to its own category, symbol and
+// default_name_format. A create with any other key is 400, and a value whose
+// JSON type differs from the default's is 400. Types not listed take any key.
+var templateDefaults = map[string]map[string]any{
+	"vpcs": {
+		"category": "guest", "symbol": ":/symbols/vpcs_guest.svg", "default_name_format": "PC{0}",
+		"base_script_file": "vpcs_base_config.txt", "console_auto_start": false, "console_type": "telnet",
+	},
+	"qemu": {
+		"category": "guest", "symbol": ":/symbols/qemu_guest.svg", "default_name_format": "{name}-{0}",
+		"adapter_type": "e1000", "adapters": 1, "bios_image": "", "boot_priority": "c", "cdrom_image": "",
+		"console_auto_start": false, "console_type": "telnet", "cpu_throttling": 0, "cpus": 1, "create_config_disk": false,
+		"custom_adapters": []any{}, "first_port_name": "", "hda_disk_image": "", "hda_disk_interface": "none",
+		"hdb_disk_image": "", "hdb_disk_interface": "none", "hdc_disk_image": "", "hdc_disk_interface": "none",
+		"hdd_disk_image": "", "hdd_disk_interface": "none", "initrd": "", "kernel_command_line": "", "kernel_image": "",
+		"legacy_networking": false, "linked_clone": true, "mac_address": "", "on_close": "power_off", "options": "",
+		"platform": "", "port_name_format": "Ethernet{0}", "port_segment_size": 0, "process_priority": "normal",
+		"qemu_path": "", "ram": 256, "replicate_network_connection_state": true, "tpm": false, "uefi": false, "usage": "",
+	},
+	"dynamips": {
+		"category": "router", "symbol": ":/symbols/router.svg", "default_name_format": "R{0}",
+		"auto_delete_disks": false, "console_auto_start": false, "console_type": "telnet", "disk0": 0, "disk1": 0,
+		"exec_area": 64, "idlemax": 500, "idlepc": "", "idlesleep": 30, "image": "", "mac_addr": "", "midplane": "vxr",
+		"mmap": true, "npe": "npe-400", "nvram": 512, "platform": "", "private_config": "", "ram": 512, "sparsemem": true,
+		"startup_config": "ios_base_startup-config.txt", "system_id": "FTX0945W0MY", "usage": "",
+	},
+	"docker": {
+		"category": "guest", "symbol": ":/symbols/docker_guest.svg", "default_name_format": "{name}-{0}",
+		"adapters": 1, "console_auto_start": false, "console_http_path": "/", "console_http_port": 80,
+		"console_resolution": "1024x768", "console_type": "telnet", "custom_adapters": []any{}, "environment": "",
+		"extra_hosts": "", "extra_volumes": []any{}, "image": "", "mac_address": "", "start_command": "", "usage": "",
+	},
+}
+
+// templateCategories is the category enum (a 2.2.61 create or update with any
+// other value is 400).
+var templateCategories = []string{"router", "switch", "guest", "firewall"}
+
+func (f *fakeGNS3) findTemplate(id string) map[string]any { return f.templates[id] }
+
+func (f *fakeGNS3) withTemplate(h func(http.ResponseWriter, *http.Request, map[string]any)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		tpl := f.findTemplate(r.PathValue("id"))
+		if tpl == nil {
+			fail(w, 404, "Template ID %s doesn't exist", r.PathValue("id"))
+			return
+		}
+		h(w, r, tpl)
+	}
+}
+
+func (f *fakeGNS3) createTemplate(w http.ResponseWriter, r *http.Request) {
+	body, ok := decode(w, r)
+	if !ok {
+		return
+	}
+	for _, k := range []string{"compute_id", "name", "template_type"} {
+		if _, ok := body[k]; !ok {
+			fail(w, 400, "JSON schema error with API request '/v2/templates': '%s' is a required property", k)
+			return
 		}
 	}
-	return nil
+	tplType, _ := body["template_type"].(string)
+	if !slices.Contains(templateTypes, tplType) {
+		fail(w, 400, "JSON schema error with API request '/v2/templates': '%s' is not one of %v", tplType, templateTypes)
+		return
+	}
+	if c, ok := body["category"].(string); ok && !slices.Contains(templateCategories, c) {
+		fail(w, 400, "JSON schema error with API request '/v2/templates': '%s' is not valid under any of the given schemas", c)
+		return
+	}
+	for _, k := range requiredTemplateProperties[tplType] {
+		if _, ok := body[k]; !ok {
+			fail(w, 400, "JSON schema error adding template: '%s' is a required property", k)
+			return
+		}
+	}
+	tpl := map[string]any{}
+	defaults, typed := templateDefaults[tplType]
+	maps.Copy(tpl, defaults)
+	for k, v := range body {
+		if typed && !slices.Contains(gns3.TemplateCommonKeys, k) {
+			def, known := defaults[k]
+			if !known {
+				fail(w, 400, "JSON schema error adding template: Additional properties are not allowed ('%s' was unexpected)", k)
+				return
+			}
+			if fmt.Sprintf("%T", def) != fmt.Sprintf("%T", normalizeJSON(v)) {
+				fail(w, 400, "JSON schema error adding template: %v is not of type '%T'", v, def)
+				return
+			}
+		}
+		tpl[k] = v
+	}
+	tpl["template_id"], tpl["builtin"] = newUUID(), false
+	f.templates[tpl["template_id"].(string)] = tpl
+	reply(w, 201, tpl)
+}
+
+// normalizeJSON gives a decoded JSON number the Go type the defaults use.
+func normalizeJSON(v any) any {
+	if n, ok := v.(float64); ok && n == float64(int(n)) {
+		return int(n)
+	}
+	return v
+}
+
+// updateTemplate follows 2.2.61: only name and category are checked, every
+// other key is stored as sent, and template_type, compute_id, template_id and
+// builtin are ignored (docs/api-drift.md).
+func (f *fakeGNS3) updateTemplate(w http.ResponseWriter, r *http.Request, tpl map[string]any) {
+	body, ok := decode(w, r)
+	if !ok {
+		return
+	}
+	if v, ok := body["name"]; ok {
+		if s, isString := v.(string); !isString || s == "" {
+			fail(w, 400, "JSON schema error with API request: %v is too short or not of type 'string'", v)
+			return
+		}
+	}
+	if c, ok := body["category"].(string); ok && !slices.Contains(templateCategories, c) {
+		fail(w, 400, "JSON schema error with API request: '%s' is not valid under any of the given schemas", c)
+		return
+	}
+	for k, v := range body {
+		switch k {
+		case "template_type", "compute_id", "template_id", "builtin":
+			continue
+		}
+		tpl[k] = v
+	}
+	reply(w, 200, tpl)
 }
 
 func (f *fakeGNS3) listProjects(w http.ResponseWriter, _ *http.Request) {
@@ -368,10 +515,21 @@ func (f *fakeGNS3) createNode(w http.ResponseWriter, r *http.Request, p map[stri
 }
 
 func (f *fakeGNS3) createNodeFromTemplate(w http.ResponseWriter, r *http.Request, p map[string]any) {
-	tpl := findTemplate(r.PathValue("tid"))
+	tpl := f.findTemplate(r.PathValue("tid"))
 	if tpl == nil {
 		fail(w, 404, "Template ID %s doesn't exist", r.PathValue("tid"))
 		return
+	}
+	// The controller sends the template's keys to the compute, whose vpcs
+	// create schema rejects any it does not know (seen on 2.2.61 after a PUT
+	// stored ram and bogus_prop on a vpcs template, docs/api-drift.md).
+	if tpl["template_type"] == "vpcs" && tpl["builtin"] != true {
+		for k := range tpl {
+			if _, known := templateDefaults["vpcs"][k]; !known && !slices.Contains(gns3.TemplateCommonKeys, k) {
+				fail(w, 400, "Bad request .../vpcs/nodes: Additional properties are not allowed ('%s' was unexpected)", k)
+				return
+			}
+		}
 	}
 	body, ok := decode(w, r)
 	if !ok {

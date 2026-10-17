@@ -17,7 +17,9 @@ Invoke-Build Gns3Range -Scenario vpcs-startup-config -Destroy    # the command -
 
 `-Destroy` destroys the scenario, checks that its state is empty and removes `terraform.tfstate` and its backup. It stops the server only when the `-Inspect` run started it and no other scenario is still inspected. A default run on a scenario still left up fails at `state` and names the `-Destroy` command. Both runs appear in the summary table, in the `Action` column (`inspect`, `destroy`; `run` for a default run). [docs/manual-steps.md](../../docs/manual-steps.md) lists which manual steps this replaces.
 
-`scenario.json` may carry an optional `inspect` array, printed by `-Inspect` and never run by the build:
+`scenario.json` may carry an optional `"minVersion": "X.Y.Z"`, the first provider release with what the scenario uses. A published run skips the scenario (`SKIP`, `requires provider >= X, pinned Y`) while its `main.tf` pins an older version; `-Dev` always runs it.
+
+`scenario.json` may also carry an optional `inspect` array, printed by `-Inspect` and never run by the build:
 
 ```json
 "inspect": [
@@ -29,5 +31,6 @@ Invoke-Build Gns3Range -Scenario vpcs-startup-config -Destroy    # the command -
 |---|---|---|
 | [image-upload](image-upload/README.md) | server, image | A generated 1 MiB dummy file uploaded to the local compute's qemu images with `gns3_image` |
 | [project-only](project-only/README.md) | server | One empty `gns3_project` with non-default grid and scene settings |
+| [template-roundtrip](template-roundtrip/README.md) | server | A user VPCS template from `gns3_template` and one node created from it (`minVersion` 0.3.0: published runs skip it until then) |
 | [two-nodes-one-link](two-nodes-one-link/README.md) | server | A project with two VPCS nodes from the built-in VPCS template, joined by one link |
 | [vpcs-startup-config](vpcs-startup-config/README.md) | server | Two linked VPCS nodes whose `startup.vpc` is set through `startup_config` |

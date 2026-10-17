@@ -444,6 +444,24 @@ function Format-InspectGuide {
     "$((++$n)). Tear down when done: $Teardown"
 }
 
+function Get-ScenarioSkip {
+    # The skip message for a published run when scenario.json sets minVersion above the version
+    # main.tf pins for JerryBalmer1/gns3, or $null when the scenario runs. -Dev never skips: its
+    # build has every unreleased feature. release-prep bumps the pins, and the skip goes away.
+    param([string] $Dir, [pscustomobject] $Meta, [switch] $Dev)
+    if ($Dev -or -not $Meta.PSObject.Properties['minVersion']) { return $null }
+    $main = Get-Content -LiteralPath (Join-Path $Dir 'main.tf') -Raw
+    $m = [regex]::Match($main, '(?s)source\s*=\s*"JerryBalmer1/gns3".*?version\s*=\s*"([^"]+)"')
+    if (-not $m.Success) {
+        throw "$($Meta.name): scenario.json sets minVersion, but main.tf pins no version for JerryBalmer1/gns3."
+    }
+    $pin = $m.Groups[1].Value
+    if ([version]$pin -lt [version]$Meta.minVersion) {
+        return "requires provider >= $($Meta.minVersion), pinned $pin"
+    }
+    $null
+}
+
 function Invoke-Scenario {
     # Runs one scenario folder: init, a stale-state check, apply, output, checks.ps1, then destroy,
     # which runs whenever init and the state check succeeded (also after a failed apply or failed
@@ -886,7 +904,12 @@ function Invoke-Gns3Range {
     try {
         $rows = foreach ($s in $run) {
             Write-Host "== $($s.Meta.name): $($s.Meta.description)" -ForegroundColor Cyan
-            if ($Destroy) {
+            $skip = Get-ScenarioSkip -Dir $s.Dir -Meta $s.Meta -Dev:$Dev
+            if ($skip) {
+                Write-Host "$($s.Meta.name): SKIP: $skip" -ForegroundColor Yellow
+                [pscustomobject]@{ Scenario = $s.Meta.name; Action = $(if ($Destroy) { 'destroy' } elseif ($Inspect) { 'inspect' } else { 'run' }); Result = 'SKIP'; FailedStep = $null; Seconds = 0; Message = $skip; Guide = @() }
+            }
+            elseif ($Destroy) {
                 Invoke-ScenarioDestroy -Dir $s.Dir -Meta $s.Meta
             }
             else {
@@ -897,7 +920,7 @@ function Invoke-Gns3Range {
     finally {
         foreach ($name in $saved.Keys) { [Environment]::SetEnvironmentVariable($name, $saved[$name]) }
         $keepServer = $false
-        if ($Inspect) {
+        if ($Inspect -and @($rows | Where-Object Result -ne 'SKIP')) {
             # The scenario stays up, so the server stays running; the marker tells -Destroy whose it is.
             $null = New-Item -ItemType Directory -Force -Path $inspectDir -ErrorAction Stop
             [ordered]@{ scenario = $Scenario; dev = [bool]$Dev; startedServer = [bool]$started; serverPid = $(if ($started) { $started.Id } else { $null }); at = (Get-Date).ToString('o') } |
@@ -927,11 +950,14 @@ function Invoke-Gns3Range {
         Write-Host ($guide -join "`n")
         Write-Host ''
     }
-    $failed = @($rows | Where-Object Result -ne 'PASS')
+    $failed = @($rows | Where-Object Result -notin 'PASS', 'SKIP')
     if ($failed) {
         throw "$($failed.Count) of $(@($rows).Count) scenario(s) failed ($mode): $(@($failed.Scenario) -join ', ')"
     }
-    Write-Host "All $(@($rows).Count) scenario(s) passed against $server ($mode)." -ForegroundColor Green
+    $skipped = @($rows | Where-Object Result -eq 'SKIP')
+    $passed = @($rows).Count - $skipped.Count
+    $skipNote = if ($skipped) { ", $($skipped.Count) skipped ($(@($skipped.Scenario) -join ', '))" } else { '' }
+    Write-Host "$passed scenario(s) passed$skipNote against $server ($mode)." -ForegroundColor Green
 }
 
 # Runs each scenario under test/scenarios (or only -Scenario <name>) against a live server: init,
@@ -939,7 +965,8 @@ function Invoke-Gns3Range {
 # when nothing answers and stops afterwards only the server it started. Terraform runs with a CLI
 # config of its own, so Jerry's terraform.rc never applies. By default that config is direct {}
 # only and the scenarios run the provider published on the Registry; with -Dev it adds a
-# dev_overrides entry for a go build of this checkout. -Capture is a stub.
+# dev_overrides entry for a go build of this checkout. -Capture is a stub. A published run skips a
+# scenario whose scenario.json minVersion is above the version its main.tf pins; -Dev never skips.
 # -Scenario <name> -Inspect skips destroy, starts the nodes, opens the project in gns3.exe (or
 # prints the web UI address), leaves the server running and prints a numbered "what to do now"
 # block: console links, the scenario.json "inspect" commands and the teardown command.
@@ -950,14 +977,14 @@ task Gns3Range {
 
 # generic: copy to any Invoke-Build repo
 # Walks every .md in the repo (not .git, .terraform or node_modules) and fails on any relative
-# link or image path that does not resolve, and on any .md under docs/ or test/scenarios/ without
+# link or image path that does not resolve, and on any .md under docs/, test/scenarios/ or lab-template/ without
 # an "Up:" line. The pages tfplugindocs generates for the Registry (docs/index.md, docs/resources/,
 # docs/data-sources/) need no Up: line; their links are still checked. Fenced code blocks and
 # inline code are skipped. A leading / resolves from the repo root, as on GitHub.
 task Test-Docs {
     $skip = '[\\/](\.git|\.terraform|node_modules)([\\/]|$)'
     $files = @(Get-ChildItem -Path $PSScriptRoot -Recurse -File -Filter '*.md' -Force | Where-Object { $_.FullName -notmatch $skip })
-    $upRequired = '^(docs|test[\\/]scenarios)[\\/]'
+    $upRequired = '^(docs|test[\\/]scenarios|lab-template)[\\/]'
     $upExempt = '^docs[\\/]((resources|data-sources)[\\/]|index\.md$)'
     $problems = foreach ($file in $files) {
         $rel = [IO.Path]::GetRelativePath($PSScriptRoot, $file.FullName)
@@ -984,7 +1011,7 @@ task Test-Docs {
     if ($problems) {
         throw "Test-Docs found $(@($problems).Count) problem(s) in $($files.Count) .md file(s):`n$($problems -join "`n")"
     }
-    Write-Host "Test-Docs: $($files.Count) .md file(s); every relative link resolves and every page under docs/ and test/scenarios/ that needs an Up: line has one." -ForegroundColor Green
+    Write-Host "Test-Docs: $($files.Count) .md file(s); every relative link resolves and every page under docs/, test/scenarios/ and lab-template/ that needs an Up: line has one." -ForegroundColor Green
 }
 
 # The full chain before a release tag (the pre-push hook runs it for any tag): lint, unit tests,

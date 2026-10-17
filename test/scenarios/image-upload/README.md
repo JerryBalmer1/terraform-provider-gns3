@@ -2,7 +2,7 @@
 
 Up: [Scenario tests](../README.md)
 
-See also: [project-only](../project-only/README.md), [two-nodes-one-link](../two-nodes-one-link/README.md), [vpcs-startup-config](../vpcs-startup-config/README.md)
+See also: [project-only](../project-only/README.md), [two-nodes-one-link](../two-nodes-one-link/README.md), [template-roundtrip](../template-roundtrip/README.md), [vpcs-startup-config](../vpcs-startup-config/README.md)
 
 Uploads `test/images/scenario-dummy.img` to the `local` compute's qemu images folder as `tf-scenario-dummy.img`, with `gns3_image` (`source_path`, and `md5sum = filemd5(...)` to pin the content).
 
