@@ -143,8 +143,9 @@ func (r *nodeResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 					"On create it is written before the node is started (`start_on_create`). " +
 					"A change is applied in place and takes effect the next time the node starts; a running node is not restarted. " +
 					"Removing the attribute stops managing the file and leaves its content. " +
-					"`qemu` has no startup configuration (the disk image holds it; appliances that build a config disk use " +
-					"`properties.create_config_disk`), and `iou` and `docker` are not supported yet: " +
+					"`qemu` is not supported (GNS3 2.2 config disks do not work on Windows computes and are not read by VyOS; " +
+					"configure the appliance after boot with Ansible, or with cloud-init where the image supports it), " +
+					"and `iou` and `docker` are not supported yet: " +
 					"setting it on those, or on any other node type, is an error, at plan time when the node type " +
 					"(or the template's type) is known.",
 			},
@@ -406,12 +407,15 @@ var startupConfigFiles = map[string]string{
 	"vpcs": "startup.vpc",
 }
 
+// qemuConfigDiskDoc records what create_config_disk does on 2.2.61.
+const qemuConfigDiskDoc = "https://github.com/JerryBalmer1/terraform-provider-gns3/blob/main/docs/api-drift.md#qemu-config-disk-2261"
+
 // startupConfigUnsupported explains, per node type, why startup_config is
 // refused. Types not listed here or in startupConfigFiles (and not dynamips)
 // have no startup configuration at all.
 var startupConfigUnsupported = map[string]string{
-	"qemu": "a qemu node takes its configuration from its disk image, which GNS3 does not edit. " +
-		"Appliances that build a config disk use properties.create_config_disk instead.",
+	"qemu": "GNS3 2.2 config disks are not supported on Windows computes and are not read by VyOS; " +
+		"use Ansible after boot, or cloud-init where the image supports it. See " + qemuConfigDiskDoc + ".",
 	"iou":    "iou is not supported yet: its startup config has not been confirmed against a live GNS3 2.2 server.",
 	"docker": "docker is not supported yet: its config files have not been confirmed against a live GNS3 2.2 server.",
 }

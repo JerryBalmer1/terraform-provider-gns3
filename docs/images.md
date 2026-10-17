@@ -89,3 +89,5 @@ Later plans:
 - `terraform destroy` removes the resource from state and warns that the file is still on the compute. GNS3 2.2 has no API to delete images (`DELETE` answers 405), so delete the file from the folder in the table above if you need the space.
 
 To use the ISO, create a qemu template in the GNS3 GUI (or a `gns3_node` with `node_type = "qemu"` and `properties = jsonencode({ cdrom_image = gns3_image.vyos.filename, hda_disk_image = data.gns3_image.disk.filename, ram = 2048 })`; not tried against a server yet).
+
+qemu appliances (VyOS, vEOS, OPNsense, CHR) get their configuration after boot, not from the provider. `gns3_node` refuses `startup_config` on `qemu` nodes. The GNS3 2.2 config disk (`create_config_disk`) needs mtools and a `config.img` that the Windows server does not ship, and it only copies files onto a FAT disk; VyOS does not read that disk by itself (see [qemu config disk (2.2.61)](api-drift.md#qemu-config-disk-2261)). Once the node is up, configure it with Ansible over the console or management network, or with cloud-init when the image supports it.

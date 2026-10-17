@@ -54,11 +54,32 @@ Probed on 2026-10-15 against 2.2.61 on Windows, each with a throwaway project th
 |---|---|---|
 | `vpcs` | `GET .../files/startup.vpc` is 404 before anything is written. `POST` writes it exactly, and `GET` returns the same bytes. The node's `properties` stay `{}`, and a rename afterwards succeeds | supported: `startup.vpc` |
 | `dynamips` | see the section above | supported: `configs/i<dynamips_id>_startup-config.cfg` |
-| `qemu` | the node's `properties` (2.2.61, with `platform` `x86_64`) have no startup-config key, and `GET .../files/startup-config.cfg` is 404. The one related key is `create_config_disk`, which builds a config disk on `hdd` from files in the node's config folder | refused at plan time; the error points to `properties.create_config_disk` |
+| `qemu` | the node's `properties` (2.2.61, with `platform` `x86_64`) have no startup-config key, and `GET .../files/startup-config.cfg` is 404. The one related key is `create_config_disk`, which builds a config disk on `hdd` from the node's `config.zip` when the compute supports it (see [qemu config disk (2.2.61)](#qemu-config-disk-2261)) | refused at plan time; the error points to `properties.create_config_disk` |
 | `iou`, `docker` | not probed: the Windows compute's `capabilities.node_types` has neither | refused at plan time as "not supported yet" until probed on a GNS3 VM or Linux compute |
 | others (`cloud`, `nat`, switches, hubs, `traceng`, `virtualbox`, `vmware`) | not probed; no startup-config property in the docs | refused: "has no startup configuration" |
 
 A node created from a template gets the same check at plan time, after `GET /v2/templates/{template_id}` gives `template_type`.
+
+### qemu config disk (2.2.61)
+
+Property: `create_config_disk` on `POST /v2/compute/projects/{project_id}/qemu/nodes` ([docs](https://gns3-server.readthedocs.io/en/stable/api/v2/compute/qemu/projectsprojectidqemunodes.html)), set through `properties` on the controller node create. Files: `GET`/`POST /v2/projects/{project_id}/nodes/{node_id}/files/{path}` ([docs](https://gns3-server.readthedocs.io/en/stable/api/v2/controller/node/projectsprojectidnodesnodeidfilespath.html)). Source: `gns3server/compute/qemu/qemu_vm.py` and `gns3server/compute/qemu/__init__.py` at tag [v2.2.61](https://github.com/GNS3/gns3-server/tree/v2.2.61/gns3server/compute/qemu).
+
+- **Docs:** "Automatically create a config disk on HDD disk interface (secondary slave)", boolean. Nothing about what goes on the disk or where it comes from.
+- **Source (v2.2.61):**
+  - The manager uses one fixed image name, `config.img`, in the `QEMU` images folder. At startup `_init_config_disk` unpacks the bundled resource `compute/qemu/resources/config.img.zip` there if it is missing. `config.img` is a blank disk with an MBR and one FAT partition.
+  - Each node blanks its `config_disk_name` at creation (so the feature is off for that node) when `mcopy` (mtools) is not on the server's `PATH`, or when `config.img` is not in the images folder. Only a log warning says so; the API still accepts and returns `create_config_disk: true`.
+  - At start (`_disk_options`), when `create_config_disk` is true and the image exists: `hdd_disk_image` is ignored, `_import_config` runs, and `<node_dir>/config.img` is attached as drive index 3 (`hdd`), `format=raw`, on `hdd_disk_interface` (or `hda_disk_interface` when that is `none`).
+  - `_import_config`: the input is **`<node_dir>/config.zip`**. When it exists, the server copies the blank `config.img` to `config.img.tmp`, unpacks the zip and `mcopy`s every top-level entry to the FAT root (`::/`), then replaces `<node_dir>/config.img`. When `config.zip` is missing, an existing `<node_dir>/config.img` is reused as is, or the blank image is copied in. If `hdd_disk_image` names a `.zip` file and neither `config.zip` nor `config.img` exists, that zip is copied to `config.zip` first.
+  - At stop (`stop` → `_export_config`): the server copies everything on the FAT disk back out with `mcopy` and **rewrites `config.zip`** from it. So `config.zip` holds whatever the guest saved to the disk, not what was uploaded.
+  - Nothing is specific to an appliance: no `config.boot`, no cloud-init, no file names. The guest has to mount the disk and read it itself. The `vyos.gns3a` appliance in gns3-registry does not set `create_config_disk`, and a GitHub code search for `create_config_disk` in the GNS3 org on 2026-10-16 found it only in gns3-server and gns3-gui, in no appliance file.
+- **2.2.61 on Windows** (probed 2026-10-16, `GET /v2/version` 2.2.61, the server already running on port 3080 from an earlier `Invoke-Build Gns3Start`, PID 150704; throwaway project `tf-probe-qemu-config-disk`, deleted afterwards):
+  - The server log has `WARNING __init__.py:395 Config disk: image 'config.img' missing` at every startup. No `config.img` is in `$env:TEMP\gns3\data\images\QEMU`, and no file named `config.img*` is under `C:\Program Files\GNS3`: the Windows install ships no `config.img.zip`. `mcopy` is not on `PATH` either.
+  - `POST .../nodes` with `node_type` `qemu` and `properties` `{create_config_disk: true, hda_disk_image: "empty8G.qcow2", ram: 256, platform: "x86_64"}` returns 201, and `properties.create_config_disk` comes back `true`. The log then says `WARNING qemu_vm.py:150 Config disk: 'mtools' are not installed.` No property names the config disk image.
+  - The node directory (`<project>\project-files\qemu\<node_id>`) is empty after create. `GET .../files/config.img` and `GET .../files/config.zip` are 404. There is no listing: `GET .../files/` is 404.
+  - `POST .../files/config.zip` with a 161-byte zip holding `config.boot` (`system { host-name tf-probe-vyos }`) returns 201 and writes `<node_dir>\config.zip`. `GET` returns the same bytes (same MD5).
+  - `POST .../nodes/{node_id}/start` fails with 409 `HAXM acceleration support is not installed on this host`, so no qemu process ran. After `stop`, `config.zip` is unchanged and no `config.img` appears. Free RAM on the host was about 1.4 GB.
+  - **Not seen:** a config disk being built or attached, and whether VyOS reads anything from it. On this host the feature is off (no `config.img`, no mtools), qemu can't start (no HAXM), and no VyOS image is on the server. That needs a GNS3 VM or Linux compute with mtools and KVM, and a VyOS qcow2.
+- **Client now:** unchanged. `startup_config` on `qemu` is still refused at plan time.
 
 ### Project DELETE races the emulator process on Windows
 

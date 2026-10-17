@@ -4,7 +4,7 @@ Maintained by hand. GoReleaser does not generate release notes (`changelog.disab
 
 ## Unreleased
 
-No provider changes.
+- `gns3_node`: the qemu `startup_config` error now explains that GNS3 2.2 config disks don't work on Windows and points to Ansible or cloud-init.
 
 Agent and contributor tooling:
 

@@ -26,7 +26,7 @@ func TestStartupConfigDispatch(t *testing.T) {
 		{name: "dynamips", nodeType: "dynamips", dynamipsID: "3", want: "configs/i3_startup-config.cfg"},
 		{name: "dynamips no id", nodeType: "dynamips", wantErr: "reports no dynamips_id"},
 		{name: "dynamips bad id", nodeType: "dynamips", dynamipsID: `"x"`, wantErr: "reports no dynamips_id"},
-		{name: "qemu", nodeType: "qemu", wantErr: "properties.create_config_disk"},
+		{name: "qemu", nodeType: "qemu", wantErr: "config disks are not supported on Windows computes"},
 		{name: "iou", nodeType: "iou", wantErr: "iou is not supported yet"},
 		{name: "docker", nodeType: "docker", wantErr: "docker is not supported yet"},
 		{name: "switch", nodeType: "ethernet_switch", wantErr: "a ethernet_switch node has no startup configuration"},
@@ -59,6 +59,21 @@ func TestCheckStartupConfigTypeCoversEveryNodeType(t *testing.T) {
 		if diags.HasError() == supported {
 			t.Errorf("%s: supported = %v, diags = %v", nodeType, supported, diags)
 		}
+	}
+}
+
+func TestCheckStartupConfigTypeQemuMessage(t *testing.T) {
+	var diags diag.Diagnostics
+	checkStartupConfigType("qemu", &diags)
+	if !diags.HasError() {
+		t.Fatal("qemu startup_config accepted")
+	}
+	want := "startup_config is supported on vpcs and dynamips nodes only: " +
+		"GNS3 2.2 config disks are not supported on Windows computes and are not read by VyOS; " +
+		"use Ansible after boot, or cloud-init where the image supports it. " +
+		"See https://github.com/JerryBalmer1/terraform-provider-gns3/blob/main/docs/api-drift.md#qemu-config-disk-2261."
+	if got := diags.Errors()[0].Detail(); got != want {
+		t.Fatalf("detail = %q\nwant     %q", got, want)
 	}
 }
 

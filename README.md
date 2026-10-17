@@ -1,3 +1,7 @@
+<p align="center"><img src="https://capsule-render.vercel.app/api?type=waving&color=0:2E3440,100:5E81AC&height=160&section=header&text=terraform-provider-gns3&fontSize=40&fontColor=ECEFF4&animation=fadeIn&desc=Network%20labs%20as%20code&descAlignY=72&descSize=18" alt="terraform-provider-gns3" /></p>
+
+<p align="center"><a href="https://registry.terraform.io/providers/JerryBalmer1/gns3/latest"><img src="https://img.shields.io/badge/dynamic/json?url=https://registry.terraform.io/v1/providers/JerryBalmer1/gns3&query=$.version&label=registry" alt="Terraform Registry version" /></a> <a href="https://github.com/JerryBalmer1/terraform-provider-gns3/actions/workflows/ci.yml"><img src="https://github.com/JerryBalmer1/terraform-provider-gns3/actions/workflows/ci.yml/badge.svg" alt="CI" /></a> <a href="go.mod"><img src="https://img.shields.io/github/go-mod/go-version/JerryBalmer1/terraform-provider-gns3" alt="Go version" /></a> <a href="LICENSE"><img src="https://img.shields.io/github/license/JerryBalmer1/terraform-provider-gns3" alt="Licence" /></a></p>
+
 # terraform-provider-gns3
 
 A Terraform provider for [GNS3](https://www.gns3.com/): projects, nodes, links and emulator images on a GNS3 server, managed through its REST API. Registry address `JerryBalmer1/gns3`, version 0.2.0.
