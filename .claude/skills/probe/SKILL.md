@@ -24,8 +24,14 @@ Before building on an endpoint whose behaviour the 2.2.52 docs leave unclear, or
    Invoke-RestMethod "$s/v2/projects/$($p.project_id)" -Method Delete
    ```
    Every probe deletes what it created, in that order.
-4. `Invoke-Build Gns3Stop`. It stops only the server Gns3Start recorded.
-5. Record the finding in `docs/api-drift.md` under the right section: endpoint and docs link, **Docs:**, **2.2.x:** (the version `GET /v2/version` reported, the date and how the server was started), and **Client now:**.
+4. **Record the fixtures** for every endpoint the probe covered while the objects still exist, one call each, with `Invoke-Build RecordFixture` (before the cleanup in step 3):
+   ```powershell
+   Invoke-Build RecordFixture -Name snapshots/list -Method GET -Path "/v2/projects/$($p.project_id)/snapshots"
+   Invoke-Build RecordFixture -Name snapshots/create -Method POST -Path "/v2/projects/$($p.project_id)/snapshots" -Body '{"name":"snap1"}' -Source https://gns3-server.readthedocs.io/en/stable/api/v2/controller/snapshot/projectsprojectidsnapshots.html
+   ```
+   It makes the call itself, so a recorded POST creates what it says: delete that too. It writes `pkg/gns3/testdata/<Name>.json` with `_header` `recorded from GNS3 <version> on <date>`, the request and the live response (`body` for JSON, `text` otherwise). It refuses a server that Gns3Start didn't start, a `-Name` that isn't `<area>/<name>`, and a new fixture without `-Source` (the docs page). An existing fixture keeps its `_source` and `_notes`; check the notes still hold, add one for any change from the docs sample, and update the replay test's IDs. JSON request bodies only: record node-file calls (raw text) by hand.
+5. `Invoke-Build Gns3Stop`. It stops only the server Gns3Start recorded.
+6. Record the finding in `docs/api-drift.md` under the right section: endpoint and docs link, **Docs:**, **2.2.x:** (the version `GET /v2/version` reported, the date and how the server was started), and **Client now:**.
 
 ## Stop and ask when
 

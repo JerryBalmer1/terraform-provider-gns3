@@ -49,7 +49,7 @@ Assert-NodeStatus $id 'started' 'after apply (action_trigger after_create on the
 # (the dev override under -Dev), GNS3_HOST and GNS3_PORT are already set; -chdir picks this folder
 # whatever the current directory is.
 $tf = Get-TerraformExe
-& $tf "-chdir=$PSScriptRoot" apply '-invoke=action.gns3_stop_nodes.stop' -auto-approve -input=false -no-color | Out-Host
+& $tf "-chdir=$PSScriptRoot" apply '-invoke=action.gns3_stop_nodes.stop' -auto-approve -input=false -no-color | ForEach-Object { Write-Host $_ }
 if ($LASTEXITCODE -ne 0) {
     throw "terraform apply -invoke=action.gns3_stop_nodes.stop failed with exit code $LASTEXITCODE"
 }

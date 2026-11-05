@@ -11,7 +11,7 @@ Builds a project `tf-scenario-actions-start-stop` with two VPCS nodes, `PC1` at 
 
 The trigger is on the link because the link is the last resource created. It references both nodes, so Terraform creates it only after `PC1` and `PC2` exist. A trigger on one node could fire before the other node exists, and that node would stay stopped. A trigger on the project would fire before any node exists.
 
-Actions need Terraform 1.14 or later and first ship in provider 0.3.0. `main.tf` pins the published 0.2.0 like the other scenarios. `scenario.json` sets `"minVersion": "0.3.0"`, so published runs skip it (`requires provider >= 0.3.0, pinned 0.2.0`) until release-prep bumps the pins. `-Dev` runs it.
+Actions need Terraform 1.14 or later and first ship in provider 0.3.0. `main.tf` pins 0.3.0 like the other scenarios, and `scenario.json` sets `"minVersion": "0.3.0"`, so a published run with an older pin would skip it.
 
 ## What checks.ps1 verifies
 

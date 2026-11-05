@@ -3,8 +3,12 @@ package provider
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/action"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-go/tftypes"
 	"github.com/hashicorp/terraform-plugin-testing/helper/acctest"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
@@ -171,10 +175,46 @@ action "gns3_suspend_nodes" "pc2" {
 
 // suspendSubsetTestCase suspends pc2 only. VPCS has no suspend: 2.2.61
 // answers 200 and the node stays started (docs/api-drift.md), so the action
-// must succeed and both nodes end started.
+// must succeed, both nodes end started, and the action warns about pc2.
 func suspendSubsetTestCase(env testEnv) resource.TestCase {
 	return nodesActionTestCase(env, "tf-acc-suspend", true, suspendSubsetAction, "action.gns3_suspend_nodes.pc2",
-		env.checkNodeStatus("gns3_node.pc1", "started"), env.checkNodeStatus("gns3_node.pc2", "started"))
+		env.checkNodeStatus("gns3_node.pc1", "started"), env.checkNodeStatus("gns3_node.pc2", "started"),
+		env.checkSuspendWarning("gns3_node.pc2", "PC2"))
+}
+
+// checkSuspendWarning invokes gns3_suspend_nodes for one node directly, through
+// the test's client, and requires exactly the "no effect" warning naming the
+// node and its type. plugin-testing has no check for warning diagnostics, so
+// the warning of the Terraform-run invocation can't be asserted; this repeats
+// the same Invoke (on VPCS a second suspend changes nothing either).
+func (e testEnv) checkSuspendWarning(name, nodeName string) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		rs, ok := s.RootModule().Resources[name]
+		if !ok {
+			return fmt.Errorf("%s not in state", name)
+		}
+		pid, nid := rs.Primary.Attributes["project_id"], rs.Primary.Attributes["node_id"]
+		ctx := context.Background()
+		a := NewSuspendNodesAction().(*nodesAction)
+		a.client = e.client
+		var sr action.SchemaResponse
+		a.Schema(ctx, action.SchemaRequest{}, &sr)
+		raw := tftypes.NewValue(sr.Schema.Type().TerraformType(ctx), map[string]tftypes.Value{
+			"project_id": tftypes.NewValue(tftypes.String, pid),
+			"node_ids":   tftypes.NewValue(tftypes.Set{ElementType: tftypes.String}, []tftypes.Value{tftypes.NewValue(tftypes.String, nid)}),
+		})
+		var resp action.InvokeResponse
+		a.Invoke(ctx, action.InvokeRequest{Config: tfsdk.Config{Schema: sr.Schema, Raw: raw}}, &resp)
+		if resp.Diagnostics.HasError() {
+			return fmt.Errorf("suspend returned errors: %v", resp.Diagnostics)
+		}
+		warnings := resp.Diagnostics.Warnings()
+		want := fmt.Sprintf("suspend had no effect on %s (vpcs); 2.2.61 accepts the call but does not suspend this type", nodeName)
+		if len(warnings) != 1 || !strings.Contains(warnings[0].Detail(), want) {
+			return fmt.Errorf("want one warning containing %q, got %v", want, warnings)
+		}
+		return nil
+	}
 }
 
 func TestSuspendNodesActionSubset(t *testing.T) {

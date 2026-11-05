@@ -2,7 +2,7 @@
 
 Maintained by hand. GoReleaser does not generate release notes (`changelog.disable: true`).
 
-## Unreleased
+## 0.3.0 - 2026-11-04
 
 Actions, list resources, resource identity and provider functions. Existing configurations keep working on older Terraform; only the new kinds need a newer one (actions and list resources: Terraform 1.14+; identity: 1.12+; functions: 1.8+).
 
@@ -10,7 +10,7 @@ New actions (Terraform 1.14+, run from `lifecycle { action_trigger { ... } }` or
 
 - `gns3_start_nodes`, `gns3_stop_nodes`, `gns3_suspend_nodes`, `gns3_reload_nodes`: `project_id` (required) and `node_ids` (optional set). With no `node_ids` the action makes one project-wide call (`POST /v2/projects/{id}/nodes/{start|stop|suspend|reload}`); otherwise it calls each node in sorted order.
 - `gns3_snapshot`: `project_id`, `name` and `restore` (default `false`). `false` creates a snapshot named `name` (GNS3 refuses a duplicate name with 409); `true` restores the one snapshot with that name and fails when there is none or more than one. On GNS3 2.2.61 a restore leaves every node stopped.
-- On GNS3 2.2.61, VPCS has no suspend: `gns3_suspend_nodes` succeeds and VPCS nodes keep running. On a closed project the project-wide calls fail with 403 "The project is not opened". Details in `docs/api-drift.md` ("Node actions and snapshots (2.2.61)").
+- On GNS3 2.2.61, VPCS has no suspend: `gns3_suspend_nodes` succeeds and VPCS nodes keep running. The action re-reads each targeted node after the call and warns for every node whose status did not change ("suspend had no effect on PC1 (vpcs); ..."); nodes that were already suspended are not warned about. On a closed project the project-wide calls fail with 403 "The project is not opened". Details in `docs/api-drift.md` ("Node actions and snapshots (2.2.61)").
 
 New list resources (Terraform 1.14+, `terraform query`):
 
@@ -34,6 +34,8 @@ Tests, docs and build:
 - New scenarios `actions-start-stop` (an `after_create` trigger starts two linked VPCS nodes, then `checks.ps1` runs `terraform apply -invoke` on `gns3_stop_nodes`) and `query-adopt` (`terraform query` finds the applied project). Both set `minVersion` 0.3.0.
 - New examples under `examples/actions/`, `examples/list-resources/` (`list-resource.tfquery.hcl`) and `examples/functions/`, plus `import-by-identity.tf` for each resource; tfplugindocs generates `docs/actions/`, `docs/list-resources/` and `docs/functions/`.
 - `.build.ps1`: terraform is found through `$env:TERRAFORM_EXE`, then the default Windows install path, then `PATH`, and Test, TestAcc, Docs, Checklist and Gns3Range all use it. New `Preflight` task prints the go, terraform, framework and plugin-testing versions and fails below Terraform 1.14. `Test-Docs` also exempts the generated `docs/actions/`, `docs/list-resources/`, `docs/functions/` and `docs/ephemeral-resources/` pages from the `Up:` rule.
+- `Gns3Range -Quiet` prints only the summary table and failing steps; each scenario's terraform and `checks.ps1` output goes to `$env:TEMP\gns3\range-logs\<scenario>.log`, and a failure prints the last 40 lines of it.
+- New `RecordFixture` task (`-Name <area>/<name> -Method -Path [-Body] [-Source]`): makes one call to the server `Gns3Start` started and writes it to `pkg/gns3/testdata/` with `_header`, `_source` and the live response.
 - CI runs the tests against Terraform 1.14.x and the latest release. The check is now named `test (terraform 1.14.x)` / `test (terraform latest)`.
 - New acceptance test `TestAccIdentityUpgradeFrom020` downloads the published 0.2.0 provider from the Registry, applies with it, then plans with this checkout and requires an empty plan.
 
@@ -63,6 +65,7 @@ Agent and contributor tooling:
 - Skills under `.claude/skills/`: `build-and-verify`, `release-prep`, `docs` and `report-template` (generic, for any Invoke-Build repo), plus `probe` and `add-scenario` (this repo).
 - `.claude/settings.json`: a PreToolUse hook (`.claude/hooks/block-git-write.ps1`) blocks agent shell commands that run `git commit`, `git push` or `git tag`. `git tag -l` and `git tag --list` are allowed.
 - `.githooks/pre-push` runs the build before a push: `Invoke-Build Release` when a tag is pushed, `Lint`, `Test` and `Gns3Range` for `main`, and `Lint` and `Test` for any other branch. A failing task blocks the push.
+- pre-commit hook runs only this repository's vet and tests
 - `CLAUDE.md` gains generic working rules: when to stop and ask, edit and stage only, the report template, and reporting tooling gaps.
 
 Build (`.build.ps1`):

@@ -18,7 +18,7 @@ A small, complete Terraform root module to start a GNS3 lab from: a project, one
 3. **Apply**: `terraform init`, then `terraform apply`. Open the project in the GNS3 GUI (**File > Open project**) and start the nodes; each one reads its config at start.
 4. **Destroy**: `terraform destroy` removes the link, the nodes, the project and the lab template. The built-in templates and any images stay.
 
-`gns3_template` is not in the published 0.2.0. Until the next release, run it with a build of this checkout through `dev_overrides` (CLAUDE.md, "Local dev loop") and skip `terraform init`.
+`gns3_template` first ships in 0.3.0. To try changes not yet released, run it with a build of this checkout through `dev_overrides` (CLAUDE.md, "Local dev loop") and skip `terraform init`.
 
 ## How it is tested
 

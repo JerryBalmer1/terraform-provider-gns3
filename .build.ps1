@@ -46,7 +46,33 @@ Param(
 
     # Gns3Range -Scenario <name>: destroy a scenario left up by -Inspect and clear its state.
     [switch]
-    $Destroy
+    $Destroy,
+
+    # Gns3Range: print only the summary table and failing steps. Each scenario's terraform and
+    # checks.ps1 output goes to $env:TEMP\gns3\range-logs\<scenario>.log instead of the console.
+    [switch]
+    $Quiet,
+
+    # RecordFixture: the fixture to write, <area>/<name> under pkg/gns3/testdata (no .json).
+    [string]
+    $Name,
+
+    # RecordFixture: the HTTP method of the recorded call.
+    [string]
+    $Method,
+
+    # RecordFixture: the request path, starting with /v2/.
+    [string]
+    $Path,
+
+    # RecordFixture: the JSON request body, if the call takes one.
+    [string]
+    $Body,
+
+    # RecordFixture: the GNS3 API docs page for the endpoint. Required for a new fixture; an
+    # existing fixture keeps its _source (and _notes) unless this is given.
+    [string]
+    $Source
 )
 
 # InvokeBuild must already be installed (Install-Module InvokeBuild -Scope CurrentUser); this
@@ -512,6 +538,48 @@ function Get-ScenarioSkip {
     $null
 }
 
+# Gns3Range -Quiet: the log file the running scenario writes to, or $null to write to the console.
+$script:ScenarioLog = $null
+
+function Start-ScenarioLog {
+    # Under -Quiet, starts an empty log for one scenario and routes its output there.
+    param([string] $ScenarioName)
+    if (-not $Quiet) { $script:ScenarioLog = $null; return }
+    $dir = Join-Path $Gns3Work 'range-logs'
+    $null = New-Item -ItemType Directory -Force -Path $dir -ErrorAction Stop
+    $script:ScenarioLog = Join-Path $dir "$ScenarioName.log"
+    Set-Content -LiteralPath $script:ScenarioLog -Value "== $ScenarioName $(Get-Date -Format o)" -Encoding utf8NoBOM
+}
+
+function Write-ScenarioLogTail {
+    # Under -Quiet, prints the end of the failed scenario's log, so the failing step is visible.
+    if (-not $script:ScenarioLog -or -not (Test-Path -LiteralPath $script:ScenarioLog)) { return }
+    Write-Host "Last 40 lines of $($script:ScenarioLog):" -ForegroundColor Yellow
+    Get-Content -LiteralPath $script:ScenarioLog -Tail 40 | Out-Host
+}
+
+function Invoke-ScenarioTerraform {
+    # terraform for a scenario step: on the console, or under -Quiet appended (stdout and stderr)
+    # to the scenario's log. Throws on a non-zero exit code either way.
+    param([string[]] $Arguments)
+    if (-not $script:ScenarioLog) {
+        Invoke-Native (Resolve-Terraform) $Arguments | Out-Host
+        return
+    }
+    $exe = Resolve-Terraform
+    Add-Content -LiteralPath $script:ScenarioLog -Value "> terraform $($Arguments -join ' ')"
+    & $exe @Arguments *>> $script:ScenarioLog
+    if ($LASTEXITCODE -ne 0) {
+        throw "$exe $($Arguments -join ' ') failed with exit code $LASTEXITCODE"
+    }
+}
+
+function Write-ScenarioNote {
+    # A progress line: on the console, or under -Quiet into the scenario's log.
+    param([string] $Text)
+    if ($script:ScenarioLog) { Add-Content -LiteralPath $script:ScenarioLog -Value $Text } else { Write-Host $Text }
+}
+
 function Invoke-Scenario {
     # Runs one scenario folder: init, a stale-state check, apply, output, checks.ps1, then destroy,
     # which runs whenever init and the state check succeeded (also after a failed apply or failed
@@ -523,16 +591,17 @@ function Invoke-Scenario {
     $step = 'requires'
     $initDone = $false
     $outputs = @{}
+    Start-ScenarioLog -ScenarioName $Meta.name
     try {
         foreach ($need in @($Meta.requires)) {
             switch ($need) {
                 'server' { }
-                'image' { Write-Host "Wrote $(New-ScenarioDummyImage)" }
+                'image' { Write-ScenarioNote "Wrote $(New-ScenarioDummyImage)" }
                 default { throw "scenario.json requires '$need', which Gns3Range does not know (server, image)." }
             }
         }
         $step = 'init'
-        Invoke-Native (Resolve-Terraform) "-chdir=$Dir", init, -input=false, -upgrade, -no-color | Out-Host
+        Invoke-ScenarioTerraform "-chdir=$Dir", init, -input=false, -upgrade, -no-color
         # Resources left in state by an earlier run that never destroyed are not this run's to
         # delete: fail without apply and without destroy. -Destroy is the way to remove them.
         $step = 'state'
@@ -545,12 +614,12 @@ function Invoke-Scenario {
         # -Dev the dev override replaces it, so the lock file says nothing about what runs.
         if (-not $Dev) {
             $lock = Get-Content -LiteralPath (Join-Path $Dir '.terraform.lock.hcl') -Raw
-            if ($lock -notmatch 'provider "registry\.terraform\.io/jerrybalmer1/gns3" \{\s+version\s+=\s+"0\.2\.0"') {
-                throw "init did not lock registry.terraform.io/jerrybalmer1/gns3 0.2.0. Lock file:`n$lock"
+            if ($lock -notmatch 'provider "registry\.terraform\.io/jerrybalmer1/gns3" \{\s+version\s+=\s+"0\.3\.0"') {
+                throw "init did not lock registry.terraform.io/jerrybalmer1/gns3 0.3.0. Lock file:`n$lock"
             }
         }
         $step = 'apply'
-        Invoke-Native (Resolve-Terraform) "-chdir=$Dir", apply, -auto-approve, -input=false, -no-color | Out-Host
+        Invoke-ScenarioTerraform "-chdir=$Dir", apply, -auto-approve, -input=false, -no-color
         $step = 'output'
         $json = & (Resolve-Terraform) "-chdir=$Dir" output -json -no-color
         if ($LASTEXITCODE -ne 0) { throw "terraform output -json failed with exit code $LASTEXITCODE" }
@@ -561,7 +630,13 @@ function Invoke-Scenario {
             Write-Host "$($Meta.name): capture not implemented" -ForegroundColor Yellow
         }
         $step = 'checks'
-        & (Join-Path $Dir 'checks.ps1') -Server $Server -Outputs $outputs
+        if ($script:ScenarioLog) {
+            Add-Content -LiteralPath $script:ScenarioLog -Value '> checks.ps1'
+            & (Join-Path $Dir 'checks.ps1') -Server $Server -Outputs $outputs *>> $script:ScenarioLog
+        }
+        else {
+            & (Join-Path $Dir 'checks.ps1') -Server $Server -Outputs $outputs
+        }
         if ($Inspect -and $outputs['project_id']) {
             $step = 'start'
             $nodes = @(Start-ScenarioNodes -Server $Server -ProjectId $outputs['project_id'])
@@ -579,6 +654,7 @@ function Invoke-Scenario {
         $row.FailedStep = $step
         $row.Message = "$_"
         Write-Host "$($Meta.name): $step failed: $_" -ForegroundColor Red
+        Write-ScenarioLogTail
         if ($Inspect -and $initDone) {
             $row.Guide = @(Format-InspectGuide -Meta $Meta -Teardown (Get-ScenarioTeardownCommand -Name $Meta.name -Dev:$Dev))
         }
@@ -586,16 +662,18 @@ function Invoke-Scenario {
     finally {
         if ($initDone -and -not $Inspect) {
             try {
-                Invoke-Native (Resolve-Terraform) "-chdir=$Dir", destroy, -auto-approve, -input=false, -no-color | Out-Host
+                Invoke-ScenarioTerraform "-chdir=$Dir", destroy, -auto-approve, -input=false, -no-color
             }
             catch {
                 $row.Result = 'FAIL'
                 if (-not $row.FailedStep) { $row.FailedStep = 'destroy'; $row.Message = "$_" }
                 else { $row.Message += " (destroy also failed: $_)" }
                 Write-Host "$($Meta.name): destroy failed: $_" -ForegroundColor Red
+                Write-ScenarioLogTail
             }
         }
         $row.Seconds = [int]$clock.Elapsed.TotalSeconds
+        $script:ScenarioLog = $null
     }
     $row
 }
@@ -608,14 +686,15 @@ function Invoke-ScenarioDestroy {
     $row = [pscustomobject]@{ Scenario = $Meta.name; Action = 'destroy'; Result = 'FAIL'; FailedStep = $null; Seconds = 0; Message = ''; Guide = @() }
     $clock = [Diagnostics.Stopwatch]::StartNew()
     $step = 'requires'
+    Start-ScenarioLog -ScenarioName $Meta.name
     try {
         # gns3_image reads its source file on refresh, so an image scenario needs it back.
-        if (@($Meta.requires) -contains 'image') { Write-Host "Wrote $(New-ScenarioDummyImage)" }
+        if (@($Meta.requires) -contains 'image') { Write-ScenarioNote "Wrote $(New-ScenarioDummyImage)" }
         $step = 'init'
-        Invoke-Native (Resolve-Terraform) "-chdir=$Dir", init, -input=false, -upgrade, -no-color | Out-Host
+        Invoke-ScenarioTerraform "-chdir=$Dir", init, -input=false, -upgrade, -no-color
         $step = 'destroy'
         $before = @(Get-ScenarioState -Dir $Dir | Where-Object { $_ -notlike 'data.*' })
-        Invoke-Native (Resolve-Terraform) "-chdir=$Dir", destroy, -auto-approve, -input=false, -no-color | Out-Host
+        Invoke-ScenarioTerraform "-chdir=$Dir", destroy, -auto-approve, -input=false, -no-color
         $step = 'state'
         $left = @(Get-ScenarioState -Dir $Dir)
         if ($left) {
@@ -632,9 +711,11 @@ function Invoke-ScenarioDestroy {
         $row.FailedStep = $step
         $row.Message = "$_"
         Write-Host "$($Meta.name): $step failed: $_" -ForegroundColor Red
+        Write-ScenarioLogTail
     }
     finally {
         $row.Seconds = [int]$clock.Elapsed.TotalSeconds
+        $script:ScenarioLog = $null
     }
     $row
 }
@@ -806,6 +887,54 @@ task Gns3Images {
     if ($docker.Ok) {
         Write-Host "Docker images known to the compute's daemon: $(if ($docker.Items.Count) { ($docker.Items.image | Sort-Object) -join ', ' } else { '(none)' })"
     }
+}
+
+# Sends one call to the GNS3 server Gns3Start started and writes the exchange as a replay
+# fixture: pkg/gns3/testdata/<Name>.json with _header "recorded from GNS3 <version> on <date>",
+# _source, request {method, path, body} and response {status, body | text}. Refuses any other
+# server (the probe skill: never record from Jerry's GUI server). A new fixture needs -Source; an
+# existing one keeps its _source and _notes, which the task tells you to review. JSON request
+# bodies only; node-file calls with raw text bodies are recorded by hand.
+#   Invoke-Build RecordFixture -Name snapshots/list -Method GET -Path /v2/projects/<id>/snapshots
+task RecordFixture {
+    if ($Name -cnotmatch '^[a-z0-9_]+/[a-z0-9_]+$') { throw "-Name must be <area>/<name> (lower case, digits, _), got '$Name'." }
+    if ($Method -notin 'GET', 'POST', 'PUT', 'DELETE') { throw "-Method must be GET, POST, PUT or DELETE, got '$Method'." }
+    if ($Path -notlike '/v2/*') { throw "-Path must start with /v2/, got '$Path'." }
+    if (-not (Get-Gns3StartedProcess)) {
+        throw "RecordFixture records only from a server Gns3Start started (none recorded in $Gns3PidFile). Run: Invoke-Build Gns3Start"
+    }
+    $file = Join-Path $BuildRoot "pkg/gns3/testdata/$Name.json"
+    $old = if (Test-Path -LiteralPath $file) { Get-Content -LiteralPath $file -Raw | ConvertFrom-Json -AsHashtable } else { $null }
+    $src = if ($Source) { $Source } elseif ($old) { $old._source } else { $null }
+    if (-not $src) { throw "$Name is a new fixture: give -Source <GNS3 API docs page URL>." }
+    $requestBody = $null
+    if ($Body) {
+        try { $requestBody = $Body | ConvertFrom-Json -AsHashtable -NoEnumerate } catch { throw "-Body is not valid JSON: $_" }
+    }
+
+    $server = "http://${Gns3Host}:$Gns3Port"
+    $version = (Invoke-Gns3Version).version
+    if (-not $version) { throw "No GNS3 server answers GET $server/v2/version. Gns3Start's server may be on another -Gns3Port." }
+    $call = @{ Uri = "$server$Path"; Method = $Method; SkipHttpErrorCheck = $true }
+    if ($Body) { $call.ContentType = 'application/json'; $call.Body = $Body }
+    $answer = Invoke-WebRequest @call
+    $response = [ordered]@{ status = [int]$answer.StatusCode }
+    $content = if ($answer.Content -is [byte[]]) { [Text.Encoding]::UTF8.GetString($answer.Content) } else { [string]$answer.Content }
+    $type = [string]$answer.Headers['Content-Type']
+    if ($content -and $type -like '*json*') { $response.body = $content | ConvertFrom-Json -AsHashtable -NoEnumerate }
+    elseif ($content) { $response.text = $content }
+
+    $fixture = [ordered]@{ _header = "recorded from GNS3 $version on $(Get-Date -Format yyyy-MM-dd)"; _source = $src }
+    if ($old -and $old._notes) { $fixture._notes = $old._notes }
+    $request = [ordered]@{ method = $Method; path = $Path }
+    if ($null -ne $requestBody) { $request.body = $requestBody }
+    $fixture.request = $request
+    $fixture.response = $response
+    $null = New-Item -ItemType Directory -Force -Path (Split-Path -Parent $file)
+    ($fixture | ConvertTo-Json -Depth 50) + "`n" | Set-Content -LiteralPath $file -Encoding utf8NoBOM -NoNewline
+    Write-Host "Wrote ${file}: $Method $Path -> $($response.status) (GNS3 $version)." -ForegroundColor Green
+    if ($fixture.Contains('_notes')) { Write-Host "Kept _notes from the old fixture; check it still matches: $($fixture._notes)" -ForegroundColor Yellow }
+    Write-Host 'Update the replay test if the IDs or values in the fixture changed.'
 }
 
 task Build {
@@ -980,10 +1109,10 @@ function Invoke-Gns3Range {
     $rows = @()
     try {
         $rows = foreach ($s in $run) {
-            Write-Host "== $($s.Meta.name): $($s.Meta.description)" -ForegroundColor Cyan
+            if (-not $Quiet) { Write-Host "== $($s.Meta.name): $($s.Meta.description)" -ForegroundColor Cyan }
             $skip = Get-ScenarioSkip -Dir $s.Dir -Meta $s.Meta -Dev:$Dev
             if ($skip) {
-                Write-Host "$($s.Meta.name): SKIP: $skip" -ForegroundColor Yellow
+                if (-not $Quiet) { Write-Host "$($s.Meta.name): SKIP: $skip" -ForegroundColor Yellow }
                 [pscustomobject]@{ Scenario = $s.Meta.name; Action = $(if ($Destroy) { 'destroy' } elseif ($Inspect) { 'inspect' } else { 'run' }); Result = 'SKIP'; FailedStep = $null; Seconds = 0; Message = $skip; Guide = @() }
             }
             elseif ($Destroy) {

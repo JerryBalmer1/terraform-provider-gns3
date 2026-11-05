@@ -4,7 +4,7 @@
 
 # terraform-provider-gns3
 
-A Terraform provider for [GNS3](https://www.gns3.com/): projects, nodes, links and emulator images on a GNS3 server, managed through its REST API. Registry address `JerryBalmer1/gns3`, version 0.2.0.
+A Terraform provider for [GNS3](https://www.gns3.com/): projects, nodes, links and emulator images on a GNS3 server, managed through its REST API. Registry address `JerryBalmer1/gns3`, version 0.3.0.
 
 ## GNS3 version
 

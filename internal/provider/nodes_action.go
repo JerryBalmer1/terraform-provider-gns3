@@ -3,10 +3,12 @@ package provider
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 
 	"github.com/hashicorp/terraform-plugin-framework/action"
 	"github.com/hashicorp/terraform-plugin-framework/action/schema"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/JerryBalmer1/terraform-provider-gns3/pkg/gns3"
@@ -23,6 +25,9 @@ type nodesAction struct {
 	all     func(c gns3.Client, ctx context.Context, projectID string) error
 	perNode func(c gns3.Client, ctx context.Context, projectID, nodeID string) error
 	note    string // extra paragraph for the description, "" for none
+	// checkSuspended re-reads the targeted nodes after the call and warns
+	// about any whose status did not change (VPCS on 2.2.61, docs/api-drift.md).
+	checkSuspended bool
 }
 
 var (
@@ -63,7 +68,9 @@ func NewSuspendNodesAction() action.Action {
 		all:     func(c gns3.Client, ctx context.Context, pid string) error { return c.SuspendAllNodes(ctx, pid) },
 		perNode: func(c gns3.Client, ctx context.Context, pid, nid string) error { return c.SuspendNode(ctx, pid, nid) },
 		note: "VPCS has no suspend: GNS3 2.2.61 accepts the call and the node keeps running " +
-			"(see `docs/api-drift.md`, \"Node actions and snapshots (2.2.61)\").",
+			"(see `docs/api-drift.md`, \"Node actions and snapshots (2.2.61)\"). After the call the action " +
+			"re-reads each targeted node and warns about any whose status did not change.",
+		checkSuspended: true,
 	}
 }
 
@@ -127,21 +134,81 @@ func (a *nodesAction) Invoke(ctx context.Context, req action.InvokeRequest, resp
 		}
 	}
 
+	var before map[string]gns3.Node
+	if a.checkSuspended {
+		var err error
+		if before, err = a.readNodes(ctx, projectID, nodeIDs); err != nil {
+			resp.Diagnostics.AddWarning("Cannot check the GNS3 suspend",
+				"Reading the nodes before the suspend failed, so the action cannot tell whether it had an effect: "+err.Error())
+		}
+	}
+
 	if len(nodeIDs) == 0 {
 		if err := a.all(a.client, ctx, projectID); err != nil {
 			resp.Diagnostics.AddError(fmt.Sprintf("Error trying to %s GNS3 nodes", a.verb), err.Error())
 			return
 		}
 		sendProgress(resp, fmt.Sprintf("%s all nodes in project %s", a.past, projectID))
-		return
+	} else {
+		slices.Sort(nodeIDs)
+		for _, id := range nodeIDs {
+			if err := a.perNode(a.client, ctx, projectID, id); err != nil {
+				resp.Diagnostics.AddError(fmt.Sprintf("Error trying to %s GNS3 node %s", a.verb, id), err.Error())
+				return
+			}
+			sendProgress(resp, fmt.Sprintf("%s node %s in project %s", a.past, id, projectID))
+		}
 	}
 
-	slices.Sort(nodeIDs)
-	for _, id := range nodeIDs {
-		if err := a.perNode(a.client, ctx, projectID, id); err != nil {
-			resp.Diagnostics.AddError(fmt.Sprintf("Error trying to %s GNS3 node %s", a.verb, id), err.Error())
-			return
+	if before != nil {
+		a.warnUnsuspended(ctx, projectID, nodeIDs, before, &resp.Diagnostics)
+	}
+}
+
+// readNodes reads the nodes an action targets: every node in the project
+// (GET /v2/projects/{project_id}/nodes) when ids is empty, else each node
+// (GET .../nodes/{node_id}). The node action responses can't be used, because
+// 2.2.61 answers with the node as it was before the call (docs/api-drift.md).
+func (a *nodesAction) readNodes(ctx context.Context, projectID string, ids []string) (map[string]gns3.Node, error) {
+	out := map[string]gns3.Node{}
+	if len(ids) == 0 {
+		nodes, err := a.client.ListNodes(ctx, projectID)
+		if err != nil {
+			return nil, err
 		}
-		sendProgress(resp, fmt.Sprintf("%s node %s in project %s", a.past, id, projectID))
+		for _, n := range nodes {
+			out[n.NodeID] = n
+		}
+		return out, nil
+	}
+	for _, id := range ids {
+		n, err := a.client.GetNode(ctx, projectID, id)
+		if err != nil {
+			return nil, err
+		}
+		out[id] = *n
+	}
+	return out, nil
+}
+
+// warnUnsuspended re-reads the targeted nodes and warns about every node whose
+// status the suspend left unchanged. Nodes that were already suspended are
+// skipped: for them an unchanged status is the expected result.
+func (a *nodesAction) warnUnsuspended(ctx context.Context, projectID string, ids []string, before map[string]gns3.Node, diags *diag.Diagnostics) {
+	after, err := a.readNodes(ctx, projectID, ids)
+	if err != nil {
+		diags.AddWarning("Cannot check the GNS3 suspend",
+			"Re-reading the nodes after the suspend failed, so the action cannot tell whether it had an effect: "+err.Error())
+		return
+	}
+	for _, id := range slices.Sorted(maps.Keys(after)) {
+		n := after[id]
+		b, ok := before[id]
+		if !ok || b.Status == "suspended" || n.Status != b.Status {
+			continue
+		}
+		diags.AddWarning(fmt.Sprintf("GNS3 suspend had no effect on %s", n.Name),
+			fmt.Sprintf("suspend had no effect on %s (%s); 2.2.61 accepts the call but does not suspend this type. "+
+				"Node %s is still %q.", n.Name, n.NodeType, id, n.Status))
 	}
 }

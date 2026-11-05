@@ -13,7 +13,7 @@ A list block queries the server, not the state, so the query file cannot refer t
 
 `terraform query` is how you find objects to adopt: `terraform query -generate-config-out=adopt.tf` writes `import` and `resource` blocks for every result. This scenario checks only the listing and does not generate configuration.
 
-List resources need Terraform 1.14 or later and first ship in provider 0.3.0. `main.tf` pins the published 0.2.0 like the other scenarios. `scenario.json` sets `"minVersion": "0.3.0"`, so published runs skip it (`requires provider >= 0.3.0, pinned 0.2.0`) until release-prep bumps the pins. `-Dev` runs it.
+List resources need Terraform 1.14 or later and first ship in provider 0.3.0. `main.tf` pins 0.3.0 like the other scenarios, and `scenario.json` sets `"minVersion": "0.3.0"`, so a published run with an older pin would skip it.
 
 ## What checks.ps1 verifies
 

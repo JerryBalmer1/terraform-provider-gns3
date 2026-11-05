@@ -5,7 +5,7 @@ subcategory: ""
 description: |-
   Sends suspend to GNS3 nodes in one project. Without node_ids it makes one POST /v2/projects/{project_id}/nodes/suspend call for every node in the project; with node_ids it makes one POST /v2/projects/{project_id}/nodes/{node_id}/suspend call per node, in sorted order, and stops at the first error. The action changes no state and has no outputs.
   Actions need Terraform 1.14 or later. Invoke it from a resource's lifecycle { action_trigger { ... } } block or with terraform apply -invoke=action.gns3_suspend_nodes.<name>.
-  VPCS has no suspend: GNS3 2.2.61 accepts the call and the node keeps running (see docs/api-drift.md, "Node actions and snapshots (2.2.61)").
+  VPCS has no suspend: GNS3 2.2.61 accepts the call and the node keeps running (see docs/api-drift.md, "Node actions and snapshots (2.2.61)"). After the call the action re-reads each targeted node and warns about any whose status did not change.
 ---
 
 # gns3_suspend_nodes (Action)
@@ -14,7 +14,7 @@ Sends suspend to GNS3 nodes in one project. Without `node_ids` it makes one `POS
 
 Actions need Terraform 1.14 or later. Invoke it from a resource's `lifecycle { action_trigger { ... } }` block or with `terraform apply -invoke=action.gns3_suspend_nodes.<name>`.
 
-VPCS has no suspend: GNS3 2.2.61 accepts the call and the node keeps running (see `docs/api-drift.md`, "Node actions and snapshots (2.2.61)").
+VPCS has no suspend: GNS3 2.2.61 accepts the call and the node keeps running (see `docs/api-drift.md`, "Node actions and snapshots (2.2.61)"). After the call the action re-reads each targeted node and warns about any whose status did not change.
 
 ## Example Usage
 

@@ -1,6 +1,6 @@
 # terraform-provider-gns3 manual check list
 
-Provider version: 0.2.0
+Provider version: 0.3.0
 Built against: GNS3 server 2.2.52 docs (REST v2); live-checked against GNS3 server 2.2.61 on 2026-10-07 (see docs/api-drift.md)
 Last updated: 2026-10-15
 
@@ -39,7 +39,7 @@ $s = (& $tf providers schema -json | ConvertFrom-Json).provider_schemas.'registr
 Pop-Location; Remove-Item -Recurse -Force $d
 ```
 
-Expect: `0.3.0` (`0.2.0` until release-prep bumps `main.go`), then `resources:      gns3_image, gns3_link, gns3_node, gns3_project, gns3_template`, `data sources:   gns3_compute, gns3_image, gns3_project, gns3_template, gns3_version`, `actions:        gns3_reload_nodes, gns3_snapshot, gns3_start_nodes, gns3_stop_nodes, gns3_suspend_nodes`, `list resources: gns3_node, gns3_project, gns3_template` and `functions:      console_address, node_name` (not yet seen: needs a GNS3 server). Actions, list resources and functions added for 0.3.0 on 2026-11-04. Earlier: resources and data sources seen 2026-10-16 (`gns3_template` added to the resources on 2026-10-16; `gns3_image` added in both lists and version bumped to 0.2.0 on 2026-10-15).
+Expect: `0.3.0`, then `resources:      gns3_image, gns3_link, gns3_node, gns3_project, gns3_template`, `data sources:   gns3_compute, gns3_image, gns3_project, gns3_template, gns3_version`, `actions:        gns3_reload_nodes, gns3_snapshot, gns3_start_nodes, gns3_stop_nodes, gns3_suspend_nodes`, `list resources: gns3_node, gns3_project, gns3_template` and `functions:      console_address, node_name`. Seen 2026-11-04 for 0.3.0 (the same commands against a build in a scratch folder; no GNS3 server is needed). Actions, list resources and functions added for 0.3.0 on 2026-11-04. Earlier: resources and data sources seen 2026-10-16 (`gns3_template` added to the resources on 2026-10-16; `gns3_image` added in both lists and version bumped to 0.2.0 on 2026-10-15).
 
 Tests: none (the schema listing is not asserted in Go; `TestExamples` loads every resource type)
 

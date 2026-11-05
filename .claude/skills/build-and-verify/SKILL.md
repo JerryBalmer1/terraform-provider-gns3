@@ -19,8 +19,10 @@ Before staging any change, and whenever asked to build, test, verify or "run the
    4. `Invoke-Build <RangeTask> -Dev`, then `Invoke-Build <RangeTask>`. Placeholder: the repo's scenario or range task, named by `git config hooks.rangeTask` or in CLAUDE.md. Example, labelled as such: in terraform-provider-gns3 it is `Gns3Range`.
       - `-Dev` runs the scenarios with a build of this checkout. It proves the change.
       - Without `-Dev` they run the published release. That proves what users have now; expect it to lack anything unreleased.
-4. If docs, examples or doc templates changed: `Invoke-Build Docs`, then `Invoke-Build Test-Docs`.
-5. Stage the changed files by name (`git add <paths>`). Never commit, push or tag.
+      - Add `-Quiet` when the range task has it, so that only the summary table and failing steps reach the console. Example, labelled as such: `Invoke-Build Gns3Range -Dev -Quiet` writes each scenario's terraform and `checks.ps1` output to `$env:TEMP\gns3\range-logs\<scenario>.log` and, on a failure, prints the failing step and the last 40 lines of that log.
+4. If the change touches an API call that replay fixtures cover, re-record the fixture from a live test server with the repo's fixture task rather than editing a response by hand. Example, labelled as such: `Invoke-Build RecordFixture -Name <area>/<name> -Method <verb> -Path <path> [-Body <json>] [-Source <docs URL>]` in terraform-provider-gns3, against a server `Gns3Start` started (the probe skill has the details).
+5. If docs, examples or doc templates changed: `Invoke-Build Docs`, then `Invoke-Build Test-Docs`.
+6. Stage the changed files by name (`git add <paths>`). Never commit, push or tag.
 
 ## Stop and ask when
 

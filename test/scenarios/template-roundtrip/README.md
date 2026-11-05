@@ -6,7 +6,7 @@ See also: [image-upload](../image-upload/README.md), [project-only](../project-o
 
 Builds a user VPCS template `tf-scenario-template-roundtrip` with `gns3_template` (no `properties`, so the server's defaults apply), a project of the same name, and one node `PC1` at (0, 0) whose `template_id` is `gns3_template.pc.template_id`. Nothing is linked and the node is not started.
 
-`gns3_template` first ships in 0.3.0, and `main.tf` pins the published 0.2.0 like the other scenarios. `scenario.json` sets `"minVersion": "0.3.0"`, so a published run (including the pre-push hook's run for `main`) skips it with `requires provider >= 0.3.0, pinned 0.2.0`. Without the skip, apply fails with `Error: Invalid resource type` (seen 2026-10-16). `-Dev` runs it. Once release-prep bumps the pins to 0.3.0, the skip goes away.
+`gns3_template` first ships in 0.3.0, and `main.tf` pins 0.3.0 like the other scenarios. `scenario.json` sets `"minVersion": "0.3.0"`: with the 0.2.0 pin, published runs skipped it, because 0.2.0 has no `gns3_template` and apply fails with `Error: Invalid resource type` (seen 2026-10-16).
 
 ## What checks.ps1 verifies
 
