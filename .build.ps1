@@ -1001,6 +1001,18 @@ task Docs {
     }
 }
 
+# The goreleaser that GoreleaserCheck runs. Pinned here, not in tools/tools.go: go.mod would gain
+# goreleaser's whole dependency graph, and v2.14.0 and later need go 1.26 or newer while go.mod is
+# go 1.25.8 (v2.13.3 needs go 1.25.5). CI's goreleaser-action uses "~> v2", the newest v2.
+$GoreleaserVersion = 'v2.13.3'
+
+# Validates .goreleaser.yml (goreleaser check: config only, no build, no release). go run fetches
+# the pinned module through the Go module proxy the first time, then uses the module cache.
+task GoreleaserCheck {
+    Invoke-Native go run, "github.com/goreleaser/goreleaser/v2@$GoreleaserVersion", check
+    Write-Host "goreleaser $GoreleaserVersion check passed on .goreleaser.yml." -ForegroundColor Green
+}
+
 # The acceptance tests against a live server. Starts one with -AutoStart when nothing answers,
 # and stops afterwards only the server it started. The log is acc-run-<timestamp>.log.
 task TestAcc {
@@ -1222,9 +1234,9 @@ task Test-Docs {
 }
 
 # The full chain before a release tag (the pre-push hook runs it for any tag): lint, unit tests,
-# the scenarios against a live server with a dev build of this checkout (the version being tagged
+# goreleaser check on .goreleaser.yml, the scenarios against a live server with a dev build of this checkout (the version being tagged
 # is not on the Registry yet), the docs link check, and no uncommitted screenshots.
-task Release Lint, Test, { Invoke-Gns3Range -Dev }, Test-Docs, {
+task Release Lint, Test, GoreleaserCheck, { Invoke-Gns3Range -Dev }, Test-Docs, {
     $dirty = git -C $PSScriptRoot status --porcelain -- docs/screenshots
     if ($LASTEXITCODE -ne 0) { throw "git status --porcelain docs/screenshots failed with exit code $LASTEXITCODE" }
     if ($dirty) {

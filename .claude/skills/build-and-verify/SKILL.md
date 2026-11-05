@@ -22,6 +22,7 @@ Before staging any change, and whenever asked to build, test, verify or "run the
       - Add `-Quiet` when the range task has it, so that only the summary table and failing steps reach the console. Example, labelled as such: `Invoke-Build Gns3Range -Dev -Quiet` writes each scenario's terraform and `checks.ps1` output to `$env:TEMP\gns3\range-logs\<scenario>.log` and, on a failure, prints the failing step and the last 40 lines of that log.
 4. If the change touches an API call that replay fixtures cover, re-record the fixture from a live test server with the repo's fixture task rather than editing a response by hand. Example, labelled as such: `Invoke-Build RecordFixture -Name <area>/<name> -Method <verb> -Path <path> [-Body <json>] [-Source <docs URL>]` in terraform-provider-gns3, against a server `Gns3Start` started (the probe skill has the details).
 5. If docs, examples or doc templates changed: `Invoke-Build Docs`, then `Invoke-Build Test-Docs`.
+   If the GoReleaser config (`.goreleaser.yml`) or the release workflow changed: `Invoke-Build GoreleaserCheck` (pinned `goreleaser check`; config only, no build or release). `Release` also runs it.
 6. Stage the changed files by name (`git add <paths>`). Never commit, push or tag.
 
 ## Stop and ask when

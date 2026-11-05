@@ -20,7 +20,7 @@ When asked to prepare, cut or get ready for a release. The owner (Jerry) tags. Y
 4. Rename `## Unreleased` to `## X.Y.Z - YYYY-MM-DD` (today's date).
 5. Bump the version everywhere the repo records it. CLAUDE.md names the places. Example, labelled as such: in terraform-provider-gns3 that is `var version` in `main.go`, the README and CLAUDE.md, manual-check-list item 0.1, every `test/scenarios/*/main.tf` pin, and the lock-file version that `Gns3Range` checks.
 6. `Invoke-Build Docs`, then `Invoke-Build Test-Docs`.
-7. `goreleaser check` (validates the config only).
+7. `Invoke-Build GoreleaserCheck`: runs `goreleaser check` (validates the config only, never builds or releases) at the version the task pins, through `go run <module>@<version>`, so the only network access is the Go module proxy. The `Release` task runs it after Test and before the range task. Example, labelled as such: in terraform-provider-gns3 the pin is `$GoreleaserVersion` in `.build.ps1` (v2.13.3, the newest that builds with the `go.mod` Go version), not `tools/tools.go`.
 8. Run the build-and-verify skill. Stage the files. Stop: Jerry tags.
 
 ## Stop and ask when

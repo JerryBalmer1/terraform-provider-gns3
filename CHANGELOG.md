@@ -2,6 +2,10 @@
 
 Maintained by hand. GoReleaser does not generate release notes (`changelog.disable: true`).
 
+## Unreleased
+
+- Build: new `Invoke-Build GoreleaserCheck` task runs `goreleaser check` on `.goreleaser.yml` at a pinned version (v2.13.3, `$GoreleaserVersion` in `.build.ps1`); `Release` runs it after `Test` and before `Gns3Range -Dev`.
+
 ## 0.3.0 - 2026-11-04
 
 Actions, list resources, resource identity and provider functions. Existing configurations keep working on older Terraform; only the new kinds need a newer one (actions and list resources: Terraform 1.14+; identity: 1.12+; functions: 1.8+).
