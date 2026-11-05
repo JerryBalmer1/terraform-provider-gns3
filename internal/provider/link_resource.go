@@ -6,14 +6,17 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"
 	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/identityschema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/JerryBalmer1/terraform-provider-gns3/pkg/gns3"
@@ -23,6 +26,7 @@ var (
 	_ resource.Resource                = (*linkResource)(nil)
 	_ resource.ResourceWithConfigure   = (*linkResource)(nil)
 	_ resource.ResourceWithImportState = (*linkResource)(nil)
+	_ resource.ResourceWithIdentity    = (*linkResource)(nil)
 )
 
 // NewLinkResource is the gns3_link resource.
@@ -43,6 +47,12 @@ type linkEndModel struct {
 	NodeID        types.String `tfsdk:"node_id"`
 	AdapterNumber types.Int64  `tfsdk:"adapter_number"`
 	PortNumber    types.Int64  `tfsdk:"port_number"`
+}
+
+// linkIdentityModel is the gns3_link resource identity.
+type linkIdentityModel struct {
+	ProjectID types.String `tfsdk:"project_id"`
+	LinkID    types.String `tfsdk:"link_id"`
 }
 
 func (r *linkResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -103,6 +113,30 @@ func (r *linkResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 			},
 		},
 	}
+}
+
+func (r *linkResource) IdentitySchema(_ context.Context, _ resource.IdentitySchemaRequest, resp *resource.IdentitySchemaResponse) {
+	resp.IdentitySchema = identityschema.Schema{
+		Attributes: map[string]identityschema.Attribute{
+			"project_id": identityschema.StringAttribute{
+				RequiredForImport: true,
+				Description:       "UUID of the project that holds the link.",
+			},
+			"link_id": identityschema.StringAttribute{
+				RequiredForImport: true,
+				Description:       "Link UUID.",
+			},
+		},
+	}
+}
+
+// setLinkIdentity writes m's identity. id is nil when Terraform does not
+// send identity.
+func setLinkIdentity(ctx context.Context, id *tfsdk.ResourceIdentity, m linkResourceModel, diags *diag.Diagnostics) {
+	if id == nil {
+		return
+	}
+	diags.Append(id.Set(ctx, linkIdentityModel{ProjectID: m.ProjectID, LinkID: m.LinkID})...)
 }
 
 func (r *linkResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -197,6 +231,7 @@ func (r *linkResource) Create(ctx context.Context, req resource.CreateRequest, r
 	plan.fromAPI(l)
 	plan.Filters = filters // keep the configured text; the server may reformat it
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	setLinkIdentity(ctx, resp.Identity, plan, &resp.Diagnostics)
 }
 
 func (r *linkResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -219,6 +254,7 @@ func (r *linkResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 	}
 	state.fromAPI(l)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+	setLinkIdentity(ctx, resp.Identity, state, &resp.Diagnostics)
 }
 
 func (r *linkResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
@@ -243,6 +279,7 @@ func (r *linkResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	plan.fromAPI(l)
 	plan.Filters = planned
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	setLinkIdentity(ctx, resp.Identity, plan, &resp.Diagnostics)
 }
 
 func (r *linkResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -257,11 +294,25 @@ func (r *linkResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 	}
 }
 
+// ImportState takes "<project_id>/<link_id>" (terraform import, or an import
+// block's id) or an import block's identity.
 func (r *linkResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	projectID, linkID, ok := splitImportID(req.ID, "<project_id>/<link_id>", &resp.Diagnostics)
-	if !ok {
+	var id linkIdentityModel
+	if req.ID == "" && req.Identity != nil {
+		resp.Diagnostics.Append(req.Identity.Get(ctx, &id)...)
+	} else {
+		projectID, linkID, ok := splitImportID(req.ID, "<project_id>/<link_id>", &resp.Diagnostics)
+		if !ok {
+			return
+		}
+		id = linkIdentityModel{ProjectID: types.StringValue(projectID), LinkID: types.StringValue(linkID)}
+	}
+	if resp.Diagnostics.HasError() {
 		return
 	}
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("project_id"), projectID)...)
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("link_id"), linkID)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("project_id"), id.ProjectID)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("link_id"), id.LinkID)...)
+	if resp.Identity != nil {
+		resp.Diagnostics.Append(resp.Identity.Set(ctx, id)...)
+	}
 }

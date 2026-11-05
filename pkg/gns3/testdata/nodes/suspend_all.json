@@ -1,0 +1,13 @@
+{
+  "_header": "recorded from GNS3 2.2.61 on 2026-11-04",
+  "_source": "https://gns3-server.readthedocs.io/en/stable/api/v2/controller/node/projectsprojectidnodessuspend.html",
+  "_notes": "Two started VPCS nodes; both stay \"started\", because VPCS has no suspend (docs/api-drift.md).",
+  "request": {
+    "method": "POST",
+    "path": "/v2/projects/1f3db850-1612-46a1-8fce-127b55f7e606/nodes/suspend",
+    "body": {}
+  },
+  "response": {
+    "status": 204
+  }
+}

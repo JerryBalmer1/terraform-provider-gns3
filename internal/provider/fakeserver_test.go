@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/JerryBalmer1/terraform-provider-gns3/pkg/gns3"
 )
@@ -38,7 +39,11 @@ type fakeGNS3 struct {
 	images    map[string]map[string][]byte // emulator -> filename -> content (compute local)
 	uploads   int
 	console   int64
-	dynamips  int64 // last dynamips_id handed out
+	dynamips  int64                       // last dynamips_id handed out
+	seq       int64                       // last creation sequence number handed out
+	created   map[string]int64            // node_id or link_id -> creation sequence, for list order
+	snapshots map[string][]map[string]any // project_id -> snapshots, in creation order
+	restored  map[string][]string         // project_id -> names of restored snapshots, in order
 
 	// lockedDeletes is how many project DELETEs still fail with the 409 a
 	// Windows server returns while an emulator holds a project file open.
@@ -69,6 +74,7 @@ func newFakeGNS3(t *testing.T) *fakeGNS3 {
 		t: t, projects: map[string]map[string]any{}, nodes: map[string]map[string]any{},
 		links: map[string]map[string]any{}, files: map[string]map[string]string{}, console: 5000,
 		images: map[string]map[string][]byte{"qemu": {}, "dynamips": {}}, templates: map[string]map[string]any{},
+		created: map[string]int64{}, snapshots: map[string][]map[string]any{}, restored: map[string][]string{},
 	}
 	for _, tpl := range fakeTemplates {
 		f.templates[tpl["template_id"].(string)] = maps.Clone(tpl)
@@ -123,7 +129,26 @@ func newFakeGNS3(t *testing.T) *fakeGNS3 {
 		p["status"] = "closed"
 		w.WriteHeader(204)
 	}))
+	mux.HandleFunc("GET /v2/projects/{pid}/nodes", f.withProject(func(w http.ResponseWriter, _ *http.Request, p map[string]any) {
+		reply(w, 200, f.listInProject(f.nodes, p))
+	}))
 	mux.HandleFunc("POST /v2/projects/{pid}/nodes", f.withOpenProject(f.createNode))
+	for _, action := range []string{"start", "stop", "suspend", "reload"} {
+		mux.HandleFunc("POST /v2/projects/{pid}/nodes/"+action, f.withProject(func(w http.ResponseWriter, _ *http.Request, p map[string]any) {
+			// 2.2.61 answers 403 on a closed project, not the 409 of other
+			// node endpoints (docs/api-drift.md).
+			if p["status"] != "opened" {
+				fail(w, 403, "The project is not opened")
+				return
+			}
+			for _, n := range f.nodes {
+				if n["project_id"] == p["project_id"] {
+					n["status"] = nodeStatusAfter(action, n)
+				}
+			}
+			w.WriteHeader(204)
+		}))
+	}
 	mux.HandleFunc("POST /v2/projects/{pid}/templates/{tid}", f.withOpenProject(f.createNodeFromTemplate))
 	mux.HandleFunc("GET /v2/projects/{pid}/nodes/{nid}", f.withNode(func(w http.ResponseWriter, _ *http.Request, n map[string]any) { reply(w, 200, n) }))
 	mux.HandleFunc("PUT /v2/projects/{pid}/nodes/{nid}", f.withNode(f.updateNode))
@@ -134,6 +159,14 @@ func newFakeGNS3(t *testing.T) *fakeGNS3 {
 	}))
 	mux.HandleFunc("POST /v2/projects/{pid}/nodes/{nid}/stop", f.withNode(func(w http.ResponseWriter, _ *http.Request, n map[string]any) {
 		n["status"] = "stopped"
+		reply(w, 200, n)
+	}))
+	mux.HandleFunc("POST /v2/projects/{pid}/nodes/{nid}/suspend", f.withNode(func(w http.ResponseWriter, _ *http.Request, n map[string]any) {
+		n["status"] = nodeStatusAfter("suspend", n)
+		reply(w, 200, n)
+	}))
+	mux.HandleFunc("POST /v2/projects/{pid}/nodes/{nid}/reload", f.withNode(func(w http.ResponseWriter, _ *http.Request, n map[string]any) {
+		n["status"] = nodeStatusAfter("reload", n)
 		reply(w, 200, n)
 	}))
 	mux.HandleFunc("GET /v2/projects/{pid}/nodes/{nid}/files/{path...}", f.withNode(func(w http.ResponseWriter, r *http.Request, n map[string]any) {
@@ -150,11 +183,40 @@ func newFakeGNS3(t *testing.T) *fakeGNS3 {
 		f.writeFile(n["node_id"].(string), r.PathValue("path"), string(body))
 		w.WriteHeader(201)
 	}))
+	mux.HandleFunc("GET /v2/projects/{pid}/links", f.withProject(func(w http.ResponseWriter, _ *http.Request, p map[string]any) {
+		reply(w, 200, f.listInProject(f.links, p))
+	}))
 	mux.HandleFunc("POST /v2/projects/{pid}/links", f.withOpenProject(f.createLink))
 	mux.HandleFunc("GET /v2/projects/{pid}/links/{lid}", f.withLink(func(w http.ResponseWriter, _ *http.Request, l map[string]any) { reply(w, 200, l) }))
 	mux.HandleFunc("PUT /v2/projects/{pid}/links/{lid}", f.withLink(f.updateLink))
 	mux.HandleFunc("DELETE /v2/projects/{pid}/links/{lid}", f.withLink(func(w http.ResponseWriter, _ *http.Request, l map[string]any) {
 		delete(f.links, l["link_id"].(string))
+		w.WriteHeader(204)
+	}))
+	mux.HandleFunc("GET /v2/projects/{pid}/snapshots", f.withProject(func(w http.ResponseWriter, _ *http.Request, p map[string]any) {
+		out := []any{}
+		for _, s := range f.snapshots[p["project_id"].(string)] {
+			out = append(out, s)
+		}
+		reply(w, 200, out)
+	}))
+	mux.HandleFunc("POST /v2/projects/{pid}/snapshots", f.withProject(f.createSnapshot))
+	mux.HandleFunc("POST /v2/projects/{pid}/snapshots/{sid}/restore", f.withSnapshot(func(w http.ResponseWriter, _ *http.Request, p, s map[string]any) {
+		pid := p["project_id"].(string)
+		f.restored[pid] = append(f.restored[pid], s["name"].(string))
+		// 2.2.61 keeps node and link ids and leaves every node stopped; the
+		// project stays opened (docs/api-drift.md). The fake does not roll
+		// back other changes.
+		for _, n := range f.nodes {
+			if n["project_id"] == pid {
+				n["status"] = "stopped"
+			}
+		}
+		reply(w, 201, p)
+	}))
+	mux.HandleFunc("DELETE /v2/projects/{pid}/snapshots/{sid}", f.withSnapshot(func(w http.ResponseWriter, _ *http.Request, p, s map[string]any) {
+		pid := p["project_id"].(string)
+		f.snapshots[pid] = slices.DeleteFunc(f.snapshots[pid], func(o map[string]any) bool { return o["snapshot_id"] == s["snapshot_id"] })
 		w.WriteHeader(204)
 	}))
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -427,6 +489,8 @@ func (f *fakeGNS3) deleteProject(w http.ResponseWriter, _ *http.Request, p map[s
 		}
 	}
 	delete(f.projects, id)
+	delete(f.snapshots, id)
+	delete(f.restored, id)
 	w.WriteHeader(204)
 }
 
@@ -510,6 +574,7 @@ func (f *fakeGNS3) createNode(w http.ResponseWriter, r *http.Request, p map[stri
 			}
 		}
 	}
+	f.track(n["node_id"].(string))
 	f.nodes[n["node_id"].(string)] = n
 	reply(w, 201, n)
 }
@@ -558,6 +623,7 @@ func (f *fakeGNS3) createNodeFromTemplate(w http.ResponseWriter, r *http.Request
 	n := f.newNode(p["project_id"].(string), tpl["template_type"].(string), name, computeID, tpl["template_id"])
 	n["symbol"] = tpl["symbol"]
 	n["x"], n["y"] = body["x"], body["y"]
+	f.track(n["node_id"].(string))
 	f.nodes[n["node_id"].(string)] = n
 	reply(w, 201, n)
 }
@@ -626,6 +692,7 @@ func (f *fakeGNS3) deleteNode(w http.ResponseWriter, _ *http.Request, n map[stri
 	}
 	delete(f.nodes, id)
 	delete(f.files, id)
+	delete(f.created, id)
 	w.WriteHeader(204)
 }
 
@@ -676,6 +743,7 @@ func (f *fakeGNS3) createLink(w http.ResponseWriter, r *http.Request, p map[stri
 		"link_id": newUUID(), "project_id": p["project_id"], "link_type": "ethernet", "nodes": ends,
 		"filters": filters, "suspend": suspend, "capturing": false,
 	}
+	f.track(l["link_id"].(string))
 	f.links[l["link_id"].(string)] = l
 	reply(w, 201, l)
 }
@@ -713,6 +781,89 @@ func (f *fakeGNS3) updateLink(w http.ResponseWriter, r *http.Request, l map[stri
 		l["suspend"] = v
 	}
 	reply(w, 201, l)
+}
+
+// nodeStatusAfter is the status a node action (per node, or bulk POST
+// /v2/projects/{project_id}/nodes/<action>, 204 per its docs page, e.g.
+// https://gns3-server.readthedocs.io/en/stable/api/v2/controller/node/projectsprojectidnodesstart.html)
+// leaves a node in. On 2.2.61 reload starts a stopped VPCS node, and suspend
+// leaves a VPCS node as it was, because VPCS has no suspend
+// (docs/api-drift.md). Suspend on other node types is not probed; the fake
+// assumes "suspended".
+func nodeStatusAfter(action string, n map[string]any) any {
+	switch action {
+	case "start", "reload":
+		return "started"
+	case "stop":
+		return "stopped"
+	}
+	if n["node_type"] == "vpcs" {
+		return n["status"]
+	}
+	return "suspended"
+}
+
+// track records an object's creation order for the list endpoints.
+func (f *fakeGNS3) track(id string) {
+	f.seq++
+	f.created[id] = f.seq
+}
+
+// listInProject answers GET /v2/projects/{project_id}/nodes or /links with
+// the project's objects in creation order (the docs state no order). 2.2.61
+// lists them for a closed project too (docs/api-drift.md).
+func (f *fakeGNS3) listInProject(objs map[string]map[string]any, p map[string]any) []any {
+	out := []any{}
+	var ids []string
+	for id, o := range objs {
+		if o["project_id"] == p["project_id"] {
+			ids = append(ids, id)
+		}
+	}
+	slices.SortFunc(ids, func(a, b string) int { return int(f.created[a] - f.created[b]) })
+	for _, id := range ids {
+		out = append(out, objs[id])
+	}
+	return out
+}
+
+// createSnapshot is POST /v2/projects/{project_id}/snapshots (201), from
+// https://gns3-server.readthedocs.io/en/stable/api/v2/controller/snapshot/projectsprojectidsnapshots.html.
+// The docs do not say what a duplicate name does; 2.2.61 answers 409 "The
+// snapshot name <name> already exists" (docs/api-drift.md). The topology is
+// not saved, so a restore does not roll nodes or links back.
+func (f *fakeGNS3) createSnapshot(w http.ResponseWriter, r *http.Request, p map[string]any) {
+	body, ok := decode(w, r)
+	if !ok {
+		return
+	}
+	name, _ := body["name"].(string)
+	if name == "" {
+		fail(w, 400, "JSON schema error with API request: 'name' is a required property")
+		return
+	}
+	pid := p["project_id"].(string)
+	for _, s := range f.snapshots[pid] {
+		if s["name"] == name {
+			fail(w, 409, "The snapshot name %s already exists", name)
+			return
+		}
+	}
+	s := map[string]any{"snapshot_id": newUUID(), "project_id": pid, "name": name, "created_at": time.Now().Unix()}
+	f.snapshots[pid] = append(f.snapshots[pid], s)
+	reply(w, 201, s)
+}
+
+func (f *fakeGNS3) withSnapshot(h func(http.ResponseWriter, *http.Request, map[string]any, map[string]any)) http.HandlerFunc {
+	return f.withProject(func(w http.ResponseWriter, r *http.Request, p map[string]any) {
+		for _, s := range f.snapshots[p["project_id"].(string)] {
+			if s["snapshot_id"] == r.PathValue("sid") {
+				h(w, r, p, s)
+				return
+			}
+		}
+		fail(w, 404, "Snapshot ID %s doesn't exist", r.PathValue("sid"))
+	})
 }
 
 func (f *fakeGNS3) writeFile(nodeID, path, content string) {
@@ -805,6 +956,37 @@ func (f *fakeGNS3) closeProject(id string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.projects[id]["status"] = "closed"
+}
+
+// nodeStatus is a node's status, "" when the node is unknown.
+func (f *fakeGNS3) nodeStatus(projectID, nodeID string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	n, ok := f.nodes[nodeID]
+	if !ok || n["project_id"] != projectID {
+		return ""
+	}
+	s, _ := n["status"].(string)
+	return s
+}
+
+// snapshotNames lists a project's snapshot names in creation order.
+func (f *fakeGNS3) snapshotNames(projectID string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []string
+	for _, s := range f.snapshots[projectID] {
+		out = append(out, s["name"].(string))
+	}
+	return out
+}
+
+// restoredSnapshots lists the names of a project's restored snapshots, in
+// restore order.
+func (f *fakeGNS3) restoredSnapshots(projectID string) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.restored[projectID])
 }
 
 // elfMagic starts every ELF file; dynamipsELF is the 32-bit big-endian ELF

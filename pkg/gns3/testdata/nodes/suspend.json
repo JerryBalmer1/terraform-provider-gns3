@@ -1,0 +1,59 @@
+{
+  "_header": "recorded from GNS3 2.2.61 on 2026-11-04",
+  "_source": "https://gns3-server.readthedocs.io/en/stable/api/v2/controller/node/projectsprojectidnodesnodeidsuspend.html",
+  "_notes": "VPCS has no suspend: 2.2.61 answers 200 and the node stays \"started\" (docs/api-drift.md).",
+  "request": {
+    "method": "POST",
+    "path": "/v2/projects/1f3db850-1612-46a1-8fce-127b55f7e606/nodes/7362707b-00a8-4fd4-b1af-772fd8267c48/suspend",
+    "body": {}
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "command_line": "C:\\Program Files\\GNS3\\vpcs\\vpcs.exe -p 5001 -m 0 -i 1 -F -s 20002 -c 20003 -t 127.0.0.1",
+      "compute_id": "local",
+      "console": 5000,
+      "console_auto_start": false,
+      "console_host": "127.0.0.1",
+      "console_type": "telnet",
+      "custom_adapters": [],
+      "first_port_name": null,
+      "height": 59,
+      "label": {
+        "rotation": 0,
+        "style": null,
+        "text": "PC1",
+        "x": null,
+        "y": -40
+      },
+      "locked": false,
+      "name": "PC1",
+      "node_directory": "C:\\Users\\jlbal\\AppData\\Local\\Temp\\gns3\\data\\projects\\1f3db850-1612-46a1-8fce-127b55f7e606\\project-files\\vpcs\\7362707b-00a8-4fd4-b1af-772fd8267c48",
+      "node_id": "7362707b-00a8-4fd4-b1af-772fd8267c48",
+      "node_type": "vpcs",
+      "port_name_format": "Ethernet{0}",
+      "port_segment_size": 0,
+      "ports": [
+        {
+          "adapter_number": 0,
+          "data_link_types": {
+            "Ethernet": "DLT_EN10MB"
+          },
+          "link_type": "ethernet",
+          "name": "Ethernet0",
+          "port_number": 0,
+          "short_name": "e0"
+        }
+      ],
+      "project_id": "1f3db850-1612-46a1-8fce-127b55f7e606",
+      "properties": {},
+      "status": "started",
+      "symbol": ":/symbols/computer.svg",
+      "template_id": null,
+      "width": 65,
+      "x": 0,
+      "y": 0,
+      "z": 1
+    }
+  }
+}

@@ -196,6 +196,9 @@ func (p *gns3Provider) Configure(ctx context.Context, req provider.ConfigureRequ
 	}
 	resp.ResourceData = c
 	resp.DataSourceData = c
+	// Actions, list resources and functions: see actions_provider.go, list_provider.go and functions_provider.go.
+	resp.ActionData = c
+	resp.ListResourceData = c
 }
 
 func (p *gns3Provider) Resources(_ context.Context) []func() resource.Resource {

@@ -3,9 +3,20 @@ package gns3
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"testing"
 )
+
+// TestStartAllNodesClosedProject: 2.2.61 answers 403 to the bulk node
+// endpoints on a closed project (not in the docs, docs/api-drift.md).
+func TestStartAllNodesClosedProject(t *testing.T) {
+	err := replay(t, "nodes/start_all_403").StartAllNodes(context.Background(), "1f3db850-1612-46a1-8fce-127b55f7e606")
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != 403 || apiErr.Message != "The project is not opened" {
+		t.Fatalf("err = %v, want 403 \"The project is not opened\"", err)
+	}
+}
 
 var vpcsPorts = []Port{{AdapterNumber: 0, PortNumber: 0, Name: "Ethernet0", ShortName: "e0", LinkType: "ethernet"}}
 
@@ -146,5 +157,39 @@ func TestStopNode(t *testing.T) {
 	}
 	if n.Status != "stopped" {
 		t.Fatalf("status = %q", n.Status)
+	}
+}
+
+func TestReloadNode(t *testing.T) {
+	err := replay(t, "nodes/reload").ReloadNode(context.Background(),
+		"1f3db850-1612-46a1-8fce-127b55f7e606", "7362707b-00a8-4fd4-b1af-772fd8267c48")
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSuspendNode(t *testing.T) {
+	err := replay(t, "nodes/suspend").SuspendNode(context.Background(),
+		"1f3db850-1612-46a1-8fce-127b55f7e606", "7362707b-00a8-4fd4-b1af-772fd8267c48")
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAllNodesActions(t *testing.T) {
+	for _, tc := range []struct {
+		fixture, projectID string
+		call               func(Client, context.Context, string) error
+	}{
+		{"nodes/start_all", "1f3db850-1612-46a1-8fce-127b55f7e606", Client.StartAllNodes},
+		{"nodes/stop_all", "1f3db850-1612-46a1-8fce-127b55f7e606", Client.StopAllNodes},
+		{"nodes/suspend_all", "1f3db850-1612-46a1-8fce-127b55f7e606", Client.SuspendAllNodes},
+		{"nodes/reload_all", "1f3db850-1612-46a1-8fce-127b55f7e606", Client.ReloadAllNodes},
+	} {
+		t.Run(tc.fixture, func(t *testing.T) {
+			if err := tc.call(replay(t, tc.fixture), context.Background(), tc.projectID); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

@@ -29,8 +29,10 @@ Invoke-Build Gns3Range -Scenario vpcs-startup-config -Destroy    # the command -
 
 | Scenario | Requires | What it builds |
 |---|---|---|
+| [actions-start-stop](actions-start-stop/README.md) | server | Two linked VPCS nodes started by a `gns3_start_nodes` action on the link's `after_create`, then stopped with `terraform apply -invoke` (`minVersion` 0.3.0: published runs skip it until then) |
 | [image-upload](image-upload/README.md) | server, image | A generated 1 MiB dummy file uploaded to the local compute's qemu images with `gns3_image` |
 | [project-only](project-only/README.md) | server | One empty `gns3_project` with non-default grid and scene settings |
+| [query-adopt](query-adopt/README.md) | server | One empty project that `terraform query` finds through the `gns3_project` list resource, with an empty `gns3_node` list (`minVersion` 0.3.0: published runs skip it until then) |
 | [template-roundtrip](template-roundtrip/README.md) | server | A user VPCS template from `gns3_template` and one node created from it (`minVersion` 0.3.0: published runs skip it until then) |
 | [two-nodes-one-link](two-nodes-one-link/README.md) | server | A project with two VPCS nodes from the built-in VPCS template, joined by one link |
 | [vpcs-startup-config](vpcs-startup-config/README.md) | server | Two linked VPCS nodes whose `startup.vpc` is set through `startup_config` |

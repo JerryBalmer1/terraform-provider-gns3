@@ -1,0 +1,6 @@
+{
+  "name": "actions-start-stop",
+  "description": "Two linked VPCS nodes started by a gns3_start_nodes action triggered after the link is created, then stopped by invoking gns3_stop_nodes.",
+  "requires": ["server"],
+  "minVersion": "0.3.0"
+}

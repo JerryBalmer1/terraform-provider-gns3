@@ -1,0 +1,22 @@
+{
+  "_header": "recorded from GNS3 2.2.61 on 2026-11-04",
+  "_source": "https://gns3-server.readthedocs.io/en/stable/api/v2/controller/snapshot/projectsprojectidsnapshots.html",
+  "_notes": "The live body also has description and filename, which Snapshot does not decode.",
+  "request": {
+    "method": "GET",
+    "path": "/v2/projects/1f3db850-1612-46a1-8fce-127b55f7e606/snapshots"
+  },
+  "response": {
+    "status": 200,
+    "body": [
+      {
+        "created_at": 1793847731,
+        "description": "Snapshot 'snap1' taken on 2026-11-05 at 03:02:11",
+        "filename": "snap1.gns3snapshot",
+        "name": "snap1",
+        "project_id": "1f3db850-1612-46a1-8fce-127b55f7e606",
+        "snapshot_id": "d0b7e0d7-406e-4a57-90e3-2166ccf32e2f"
+      }
+    ]
+  }
+}

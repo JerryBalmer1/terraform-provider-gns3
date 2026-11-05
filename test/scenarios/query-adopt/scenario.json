@@ -1,0 +1,6 @@
+{
+  "name": "query-adopt",
+  "description": "One empty gns3_project, then terraform query lists it through the gns3_project list resource and finds no nodes in it through gns3_node.",
+  "requires": ["server"],
+  "minVersion": "0.3.0"
+}

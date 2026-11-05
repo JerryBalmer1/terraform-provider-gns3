@@ -13,7 +13,7 @@ When asked to prepare, cut or get ready for a release. The owner (Jerry) tags. Y
 1. Read `CLAUDE.md` and the `## Unreleased` section of `CHANGELOG.md`. Sort each entry into fix, addition, or plan-breaking.
 2. **Propose the version** with the pre-1.0 semver rule:
    - patch (0.x.Y): fixes only.
-   - minor (0.X.0): any new attribute, resource or data source, **or** anything that makes a previously accepted config fail at plan (removed or renamed attribute, changed default, new validation).
+   - minor (0.X.0): any new attribute, resource, data source, action, list resource or provider function (new kinds are non-breaking additions even when they need a newer Terraform, such as 1.14+ for actions and list resources), **or** anything that makes a previously accepted config fail at plan (removed or renamed attribute, changed default, new validation).
    - major (1.0.0): only when the owner declares 1.0.
    Every plan-breaking entry must have its own `Breaking:` line in the changelog; add one where it is missing.
 3. **Ask the owner to confirm the version.** Show the proposal and the entries that decided it. Don't edit anything until it is confirmed.

@@ -154,10 +154,45 @@ Endpoints: `GET /v2/computes/{compute_id}/{emulator}/images` ([docs](https://gns
 | Same, `emulator` = `dynamips` | not described | lists only 32-bit big-endian ELF files. A 36-byte text file uploaded as `dynamips` was stored in `IOS` but missing from the dynamips list, and appeared in the **qemu** list with an absolute `path` (`C:/.../images/IOS/tf-probe.image`). Source: `list_images` in `gns3server/utils/images.py` (2.2 branch), which also drops ELF files from qemu, files under 7 bytes from every list, and keeps only little-endian ELF for iou | live: after an upload that isn't listed, `gns3_image` fails with "the upload succeeded but compute ... does not list ..." and names the filter |
 | Same, `emulator` = `iou` or `docker`, Windows compute | iou, dynamips and qemu accepted; docker images on the compute page | the controller forwards both; the Windows compute answers 404 `{"message": "GET /iou/images not found"}` (`/docker/images` likewise; the compute's `capabilities.node_types` has neither). `foo` gives the same 404, and an unknown compute gives 404 `Compute ID nope doesn't exist` | live: errors pass through unchanged. `ListDockerImages` is tested only against a hand-written fixture |
 
+### Node actions and snapshots (2.2.61)
+
+Probed on 2026-11-04 against gns3server 2.2.61 (`GET /v2/version`: `{"local": true, "version": "2.2.61"}`), started by `Invoke-Build Gns3Start` on 127.0.0.1:3080, with a throwaway project of two linked VPCS nodes. The fixtures under `pkg/gns3/testdata/nodes/` (`reload`, `suspend`, `*_all`, `start_all_403`) and `pkg/gns3/testdata/snapshots/` are recorded from this run.
+
+- **VPCS suspend**, `POST /v2/projects/{project_id}/nodes/{node_id}/suspend` ([docs](https://gns3-server.readthedocs.io/en/stable/api/v2/controller/node/projectsprojectidnodesnodeidsuspend.html)) and `POST .../nodes/suspend` ([docs](https://gns3-server.readthedocs.io/en/stable/api/v2/controller/node/projectsprojectidnodessuspend.html)).
+  **Docs:** 200 with the node / 204; the status after the call isn't stated.
+  **2.2.61:** VPCS has no suspend. Both calls succeed (200 with the node, 204), and a VPCS node keeps its status: a stopped node stays `stopped`, a started one stays `started`. Other node types are not probed.
+  **Client now:** `SuspendNode`/`SuspendAllNodes` return only the error. `gns3_suspend_nodes` succeeds on VPCS and changes nothing.
+- **Reload**, `POST .../nodes/{node_id}/reload` ([docs](https://gns3-server.readthedocs.io/en/stable/api/v2/controller/node/projectsprojectidnodesnodeidreload.html)).
+  **Docs:** 200 with the node.
+  **2.2.61:** 200, and as with start the body is the node as it was before the call. Reload on a stopped VPCS node starts it (a GET right after says `started`).
+  **Client now:** `ReloadNode` ignores the body.
+- **Bulk node endpoints on a closed project**, `POST .../nodes/{start|stop|suspend|reload}` ([docs](https://gns3-server.readthedocs.io/en/stable/api/v2/controller/node/projectsprojectidnodesstart.html)).
+  **Docs:** 204, or 404 for a missing project.
+  **2.2.61:** 403 `{"message": "The project is not opened", "status": 403}` for all four. Other node endpoints answer 409 on a closed project.
+  **Client now:** the `*AllNodes` methods pass the 403 through as `*gns3.APIError`, and the node actions report it unchanged.
+- **Node and link lists on a closed project**, `GET .../nodes` and `GET .../links` ([docs](https://gns3-server.readthedocs.io/en/stable/api/v2/controller/node/projectsprojectidnodes.html)).
+  **Docs:** not described.
+  **2.2.61:** 200 with the full lists (not `[]`); the closed project's nodes carry no `status`. `GET .../snapshots` also answers 200 on a closed project.
+  **Client now:** `ListNodes` decodes them, so the `gns3_node` list resource lists a closed project's nodes.
+- **Duplicate snapshot name**, `POST /v2/projects/{project_id}/snapshots` ([docs](https://gns3-server.readthedocs.io/en/stable/api/v2/controller/snapshot/projectsprojectidsnapshots.html)).
+  **Docs:** not described.
+  **2.2.61:** 409 `{"message": "The snapshot name snap1 already exists", "status": 409}`.
+  **Client now:** passed through. `gns3_snapshot`'s "name is ambiguous" check can then only fire for snapshots made outside the API.
+- **Snapshot object.**
+  **Docs:** `created_at`, `name`, `project_id`, `snapshot_id`.
+  **2.2.61:** adds `description` (`Snapshot 'snap1' taken on 2026-11-05 at 03:02:11`, a UTC time) and `filename` (`snap1.gns3snapshot`).
+  **Client now:** `gns3.Snapshot` doesn't decode them.
+- **Restore**, `POST .../snapshots/{snapshot_id}/restore` ([docs](https://gns3-server.readthedocs.io/en/stable/api/v2/controller/snapshot/projectsprojectidsnapshotssnapshotidrestore.html)).
+  **Docs:** 201 with the project.
+  **2.2.61:** 201 with the project, still `opened`. Node and link IDs are unchanged, and two `started` nodes came back `stopped`.
+  **Client now:** `RestoreSnapshot` ignores the body. `gns3_snapshot` with `restore = true` doesn't restart nodes; run `gns3_start_nodes` afterwards.
+
 ## Confirmed as documented
 
 - `PUT /v2/projects/{project_id}/nodes/{node_id}` accepts the docs-shaped body (`compute_id`, `name`, `node_type` plus the changed fields) on any node that has no cached `startup_script` (vpcs) or `startup_config_content`/`private_config_content` (dynamips). The error echo leaves out `compute_id` and `node_type`, but they are accepted.
 - `POST /v2/projects/{project_id}/close` returns 204 with an empty body; `POST .../open` returns 201 with the project.
+- `POST /v2/projects/{project_id}/nodes/{start|stop|suspend|reload}` on an open project returns 204 with an empty body; start and stop leave every node `started` / `stopped` (2.2.61, 2026-11-04).
+- `POST .../snapshots` returns 201 with the snapshot; `DELETE .../snapshots/{snapshot_id}` returns 204; restore or delete of an unknown snapshot returns 404 `Snapshot ID <id> doesn't exist` (2.2.61, 2026-11-04).
 - Creating a node from a template with `"name": "PC1"` keeps the name `PC1` (no server-side rename).
 - `POST .../links` with both ends on the same node returns 409 `Cannot connect to itself` (recorded against a built-in Ethernet switch; on a one-port VPCS node the server answers 404 first, because port 3 doesn't exist).
 

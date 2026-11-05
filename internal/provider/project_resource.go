@@ -7,13 +7,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/identityschema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/JerryBalmer1/terraform-provider-gns3/pkg/gns3"
@@ -24,6 +27,7 @@ var (
 	_ resource.ResourceWithConfigure   = (*projectResource)(nil)
 	_ resource.ResourceWithImportState = (*projectResource)(nil)
 	_ resource.ResourceWithModifyPlan  = (*projectResource)(nil)
+	_ resource.ResourceWithIdentity    = (*projectResource)(nil)
 )
 
 // NewProjectResource is the gns3_project resource.
@@ -44,6 +48,11 @@ type projectResourceModel struct {
 	ShowGrid    types.Bool   `tfsdk:"show_grid"`
 	Status      types.String `tfsdk:"status"`
 	Filename    types.String `tfsdk:"filename"`
+}
+
+// projectIdentityModel is the gns3_project resource identity.
+type projectIdentityModel struct {
+	ProjectID types.String `tfsdk:"project_id"`
 }
 
 func (r *projectResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -116,6 +125,26 @@ func (r *projectResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 	}
 }
 
+func (r *projectResource) IdentitySchema(_ context.Context, _ resource.IdentitySchemaRequest, resp *resource.IdentitySchemaResponse) {
+	resp.IdentitySchema = identityschema.Schema{
+		Attributes: map[string]identityschema.Attribute{
+			"project_id": identityschema.StringAttribute{
+				RequiredForImport: true,
+				Description:       "Project UUID.",
+			},
+		},
+	}
+}
+
+// setProjectIdentity writes m's identity. id is nil when Terraform does not
+// send identity.
+func setProjectIdentity(ctx context.Context, id *tfsdk.ResourceIdentity, m projectResourceModel, diags *diag.Diagnostics) {
+	if id == nil {
+		return
+	}
+	diags.Append(id.Set(ctx, projectIdentityModel{ProjectID: m.ProjectID})...)
+}
+
 // ModifyPlan marks filename unknown on a rename: the server may rename the
 // .gns3 file with the project, and UseStateForUnknown would promise the old one.
 func (r *projectResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
@@ -172,6 +201,7 @@ func (r *projectResource) Create(ctx context.Context, req resource.CreateRequest
 	}
 	plan.fromAPI(p)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	setProjectIdentity(ctx, resp.Identity, plan, &resp.Diagnostics)
 }
 
 func (r *projectResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -191,6 +221,7 @@ func (r *projectResource) Read(ctx context.Context, req resource.ReadRequest, re
 	}
 	state.fromAPI(p)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+	setProjectIdentity(ctx, resp.Identity, state, &resp.Diagnostics)
 }
 
 func (r *projectResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
@@ -216,6 +247,7 @@ func (r *projectResource) Update(ctx context.Context, req resource.UpdateRequest
 	}
 	plan.fromAPI(p)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	setProjectIdentity(ctx, resp.Identity, plan, &resp.Diagnostics)
 }
 
 func (r *projectResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -265,5 +297,5 @@ func deleteProjectRetrying(ctx context.Context, c gns3.Client, id string) error 
 }
 
 func (r *projectResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	resource.ImportStatePassthroughID(ctx, path.Root("project_id"), req, resp)
+	resource.ImportStatePassthroughWithIdentity(ctx, path.Root("project_id"), path.Root("project_id"), req, resp)
 }

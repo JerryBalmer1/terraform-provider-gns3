@@ -1,0 +1,19 @@
+{
+  "_header": "recorded from GNS3 2.2.61 on 2026-11-04",
+  "_source": "https://gns3-server.readthedocs.io/en/stable/api/v2/controller/snapshot/projectsprojectidsnapshots.html",
+  "_notes": "Not in the docs: a second snapshot with the same name is refused with 409 (docs/api-drift.md).",
+  "request": {
+    "method": "POST",
+    "path": "/v2/projects/1f3db850-1612-46a1-8fce-127b55f7e606/snapshots",
+    "body": {
+      "name": "snap1"
+    }
+  },
+  "response": {
+    "status": 409,
+    "body": {
+      "message": "The snapshot name snap1 already exists",
+      "status": 409
+    }
+  }
+}

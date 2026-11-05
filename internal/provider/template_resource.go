@@ -14,12 +14,14 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/identityschema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/JerryBalmer1/terraform-provider-gns3/pkg/gns3"
@@ -31,6 +33,7 @@ var (
 	_ resource.ResourceWithImportState    = (*templateResource)(nil)
 	_ resource.ResourceWithModifyPlan     = (*templateResource)(nil)
 	_ resource.ResourceWithValidateConfig = (*templateResource)(nil)
+	_ resource.ResourceWithIdentity       = (*templateResource)(nil)
 )
 
 // templateTypes is the template_type enum a 2.2.61 POST /v2/templates
@@ -64,6 +67,11 @@ type templateResourceModel struct {
 	Category          types.String         `tfsdk:"category"`
 	Symbol            types.String         `tfsdk:"symbol"`
 	DefaultNameFormat types.String         `tfsdk:"default_name_format"`
+}
+
+// templateIdentityModel is the gns3_template resource identity.
+type templateIdentityModel struct {
+	TemplateID types.String `tfsdk:"template_id"`
 }
 
 func (r *templateResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -135,6 +143,26 @@ func (r *templateResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 	}
 }
 
+func (r *templateResource) IdentitySchema(_ context.Context, _ resource.IdentitySchemaRequest, resp *resource.IdentitySchemaResponse) {
+	resp.IdentitySchema = identityschema.Schema{
+		Attributes: map[string]identityschema.Attribute{
+			"template_id": identityschema.StringAttribute{
+				RequiredForImport: true,
+				Description:       "Template UUID.",
+			},
+		},
+	}
+}
+
+// setTemplateIdentity writes m's identity. id is nil when Terraform does not
+// send identity.
+func setTemplateIdentity(ctx context.Context, id *tfsdk.ResourceIdentity, m templateResourceModel, diags *diag.Diagnostics) {
+	if id == nil {
+		return
+	}
+	diags.Append(id.Set(ctx, templateIdentityModel{TemplateID: m.TemplateID})...)
+}
+
 // ValidateConfig checks properties against template_type when both are known.
 func (r *templateResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
 	var cfg templateResourceModel
@@ -197,6 +225,14 @@ func (m *templateResourceModel) fromAPI(t *gns3.Template) {
 	m.DefaultNameFormat = types.StringValue(t.DefaultNameFormat)
 }
 
+// fill is what Read writes into state from t: the server's values, with
+// properties narrowed to the keys m already holds (none for a new model, such
+// as a list result).
+func (m *templateResourceModel) fill(t *gns3.Template, diags *diag.Diagnostics) {
+	m.fromAPI(t)
+	m.Properties = readProperties(m.Properties, t.Properties, diags)
+}
+
 func (r *templateResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan templateResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -218,6 +254,7 @@ func (r *templateResource) Create(ctx context.Context, req resource.CreateReques
 	plan.fromAPI(t)
 	plan.Properties = readProperties(plan.Properties, t.Properties, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	setTemplateIdentity(ctx, resp.Identity, plan, &resp.Diagnostics)
 }
 
 func (r *templateResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -239,9 +276,9 @@ func (r *templateResource) Read(ctx context.Context, req resource.ReadRequest, r
 		resp.Diagnostics.Append(builtinTemplateError(t.TemplateID, t.Name))
 		return
 	}
-	state.fromAPI(t)
-	state.Properties = readProperties(state.Properties, t.Properties, &resp.Diagnostics)
+	state.fill(t, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+	setTemplateIdentity(ctx, resp.Identity, state, &resp.Diagnostics)
 }
 
 func (r *templateResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
@@ -277,6 +314,7 @@ func (r *templateResource) Update(ctx context.Context, req resource.UpdateReques
 	plan.fromAPI(t)
 	plan.Properties = readProperties(plan.Properties, t.Properties, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	setTemplateIdentity(ctx, resp.Identity, plan, &resp.Diagnostics)
 }
 
 // checkTemplateProperties creates and deletes a throwaway template with
@@ -312,5 +350,5 @@ func (r *templateResource) Delete(ctx context.Context, req resource.DeleteReques
 }
 
 func (r *templateResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	resource.ImportStatePassthroughID(ctx, path.Root("template_id"), req, resp)
+	resource.ImportStatePassthroughWithIdentity(ctx, path.Root("template_id"), path.Root("template_id"), req, resp)
 }

@@ -18,6 +18,12 @@ type NodesAPI interface {
 	DeleteNode(ctx context.Context, projectID, nodeID string) error
 	StartNode(ctx context.Context, projectID, nodeID string) (*Node, error)
 	StopNode(ctx context.Context, projectID, nodeID string) (*Node, error)
+	ReloadNode(ctx context.Context, projectID, nodeID string) error
+	SuspendNode(ctx context.Context, projectID, nodeID string) error
+	StartAllNodes(ctx context.Context, projectID string) error
+	StopAllNodes(ctx context.Context, projectID string) error
+	SuspendAllNodes(ctx context.Context, projectID string) error
+	ReloadAllNodes(ctx context.Context, projectID string) error
 	ReadNodeFile(ctx context.Context, projectID, nodeID, path string) ([]byte, error)
 	WriteNodeFile(ctx context.Context, projectID, nodeID, path string, content []byte) error
 }
@@ -172,6 +178,45 @@ func (c *v2Client) StopNode(ctx context.Context, projectID, nodeID string) (*Nod
 		return nil, err
 	}
 	return &out, nil
+}
+
+// ReloadNode is POST /v2/projects/{project_id}/nodes/{node_id}/reload (200,
+// the node). The body is not decoded: like start, the answer may predate the
+// change, so callers re-read with GetNode.
+// https://gns3-server.readthedocs.io/en/stable/api/v2/controller/node/projectsprojectidnodesnodeidreload.html
+func (c *v2Client) ReloadNode(ctx context.Context, projectID, nodeID string) error {
+	return c.do(ctx, http.MethodPost, nodePath(projectID, nodeID)+"/reload", struct{}{}, nil)
+}
+
+// SuspendNode is POST /v2/projects/{project_id}/nodes/{node_id}/suspend (200,
+// the node). The body is not decoded; callers re-read with GetNode.
+// https://gns3-server.readthedocs.io/en/stable/api/v2/controller/node/projectsprojectidnodesnodeidsuspend.html
+func (c *v2Client) SuspendNode(ctx context.Context, projectID, nodeID string) error {
+	return c.do(ctx, http.MethodPost, nodePath(projectID, nodeID)+"/suspend", struct{}{}, nil)
+}
+
+// StartAllNodes is POST /v2/projects/{project_id}/nodes/start (204).
+// https://gns3-server.readthedocs.io/en/stable/api/v2/controller/node/projectsprojectidnodesstart.html
+func (c *v2Client) StartAllNodes(ctx context.Context, projectID string) error {
+	return c.do(ctx, http.MethodPost, nodesPath(projectID)+"/start", struct{}{}, nil)
+}
+
+// StopAllNodes is POST /v2/projects/{project_id}/nodes/stop (204).
+// https://gns3-server.readthedocs.io/en/stable/api/v2/controller/node/projectsprojectidnodesstop.html
+func (c *v2Client) StopAllNodes(ctx context.Context, projectID string) error {
+	return c.do(ctx, http.MethodPost, nodesPath(projectID)+"/stop", struct{}{}, nil)
+}
+
+// SuspendAllNodes is POST /v2/projects/{project_id}/nodes/suspend (204).
+// https://gns3-server.readthedocs.io/en/stable/api/v2/controller/node/projectsprojectidnodessuspend.html
+func (c *v2Client) SuspendAllNodes(ctx context.Context, projectID string) error {
+	return c.do(ctx, http.MethodPost, nodesPath(projectID)+"/suspend", struct{}{}, nil)
+}
+
+// ReloadAllNodes is POST /v2/projects/{project_id}/nodes/reload (204).
+// https://gns3-server.readthedocs.io/en/stable/api/v2/controller/node/projectsprojectidnodesreload.html
+func (c *v2Client) ReloadAllNodes(ctx context.Context, projectID string) error {
+	return c.do(ctx, http.MethodPost, nodesPath(projectID)+"/reload", struct{}{}, nil)
 }
 
 // nodeFilePath escapes each segment of a path relative to the node directory.

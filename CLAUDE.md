@@ -31,6 +31,13 @@ main.go                       providerserver.Serve, -debug and -version flags
 internal/provider/            provider.go (schema, config resolution, shared helpers)
   <name>_resource.go          gns3_project, gns3_node, gns3_link, gns3_image, gns3_template
   <name>_data_source.go       gns3_template, gns3_compute, gns3_project, gns3_version, gns3_image
+  *_action.go                 actions (Terraform 1.14+): gns3_start_nodes, gns3_stop_nodes,
+                              gns3_suspend_nodes, gns3_reload_nodes, gns3_snapshot;
+                              registered in actions_provider.go
+  *_list.go                   list resources (Terraform 1.14+, terraform query): gns3_project,
+                              gns3_node, gns3_template; registered in list_provider.go
+  functions.go                provider functions console_address, node_name;
+                              registered in functions_provider.go
   *_test.go                   Test* run against fakeserver_test.go with resource.UnitTest;
                               TestAcc* run the same steps against a live server (TF_ACC=1)
   fakeserver_test.go          in-memory GNS3 2.2 controller built from the docs, corrected where a
@@ -40,30 +47,39 @@ pkg/gns3/                     hand-written REST client, package gns3, importable
   client.go                   Client interface, Config, APIError, v2Client transport
   projects.go nodes.go links.go templates.go computes.go images.go version.go   one file per API area
   testdata/<area>/<name>.json fixtures replayed by fixture_test.go
-docs/                         tfplugindocs output (generated), except four hand-written pages:
+docs/                         tfplugindocs output (generated: index.md, resources/, data-sources/,
+                              actions/, list-resources/, functions/), except four hand-written pages:
                               api-drift.md (2.2.52 docs vs live 2.2.61), gns3-install.md
                               (written by Invoke-Build Gns3Install), images.md (image
                               folders, free lab images, licensing) and manual-steps.md
                               (looking at a scenario in the GUI: what Gns3Range -Inspect automates)
-examples/                     provider/provider.tf, resources/<type>/resource.tf + import.sh,
-                              data-sources/<type>/data-source.tf; feed docs and TestExamples
+examples/                     provider/provider.tf, resources/<type>/resource.tf + import.sh +
+                              import-by-identity.tf, data-sources/<type>/data-source.tf,
+                              actions/<type>/action.tf, list-resources/<type>/list-resource.tfquery.hcl,
+                              functions/<name>/function.tf (the file names tfplugindocs v0.25.0 reads);
+                              all feed docs, only resources/*/resource.tf feeds TestExamples
 test/scenarios/<name>/        scenario tests run by Invoke-Build Gns3Range (see "Scenario tests")
 test/images/                  images generated for scenarios (only .gitkeep is tracked)
 lab-template/                 a root module users copy to start a lab (project, gns3_template, two nodes with
                               configs/ startup configs, one link); Test-Docs checks it, TestExamples doesn't apply it
 tools/tools.go                pins tfplugindocs (build tag tools)
-.github/workflows/            ci.yml (push to main, PRs: build, vet, gofmt, staticcheck, unit tests,
-                              docs drift; no TF_ACC), release.yml (v* tag: GPG import, goreleaser).
+.github/workflows/            ci.yml (push to main, PRs: build, vet, gofmt, staticcheck, unit tests on
+                              a terraform [1.14.x, latest] matrix; docs drift, Test-Docs and
+                              goreleaser check on latest only; no TF_ACC), release.yml (v* tag: GPG import, goreleaser).
                               Actions are SHA-pinned with a `# vX.Y.Z` tag comment; Dependabot
                               (.github/dependabot.yml) bumps both, plus Go modules
 .goreleaser.yml  terraform-registry-manifest.json (protocol 6.0)  GNUmakefile
 CHANGELOG.md                  hand-maintained (goreleaser changelog.disable: true)
 .build.ps1                    Invoke-Build tasks for Windows: the GNUmakefile targets plus
-                              Gns3Status/Install/Start/Stop/Images, TestAcc, Checklist -Item <n.m>
+                              Gns3Status/Install/Start/Stop/Images, TestAcc, Checklist -Item <n.m>,
+                              Preflight (go, terraform and plugin module versions; fails below
+                              terraform 1.14). Every task finds terraform through Resolve-Terraform:
+                              $env:TERRAFORM_EXE, then (Windows) Jerry's install under
+                              %LOCALAPPDATA%\Programs\Terraform, then PATH
 LICENSE (Apache-2.0)  NOTICE
 ```
 
-`templates/` holds three generic tfplugindocs templates (`index.md.tmpl`, `resources.md.tmpl`, `data-sources.md.tmpl`), copied unchanged from the v0.25.0 defaults so a change to every page has one place to go. The pages they generate carry no `Up:` line (relative links in Registry pages are not known to resolve there), and `Test-Docs` exempts `docs/index.md`, `docs/resources/` and `docs/data-sources/` from that rule. Add a per-type template (`templates/resources/<name>.md.tmpl`) only when one page needs more than the defaults.
+`templates/` holds three generic tfplugindocs templates (`index.md.tmpl`, `resources.md.tmpl`, `data-sources.md.tmpl`), copied unchanged from the v0.25.0 defaults so a change to every page has one place to go. The pages they generate carry no `Up:` line (relative links in Registry pages are not known to resolve there), and `Test-Docs` exempts `docs/index.md` and `docs/resources/`, `docs/data-sources/`, `docs/actions/`, `docs/ephemeral-resources/`, `docs/functions/` and `docs/list-resources/` from that rule. Actions, list resources and functions use tfplugindocs' built-in defaults (no template files). Add a per-type template (`templates/resources/<name>.md.tmpl`, `templates/actions/<name>.md.tmpl`, `templates/list-resources/<name>.md.tmpl`, `templates/functions/<name>.md.tmpl`) only when one page needs more than the defaults.
 
 ```
 templates/                    generic tfplugindocs templates (see above)
@@ -121,7 +137,7 @@ go run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs validate --pr
 
 staticcheck v0.7.0 can't read export data from Go 1.27 (the local toolchain), so it runs with `GOTOOLCHAIN=go1.25.8` (the `go.mod` version) set for that one command; the `Lint` task and `make lint` do the same.
 
-`make` isn't installed on Jerry's Windows machine. The `GNUmakefile` targets wrap these same commands (see README "Make targets"), and so do the `.build.ps1` tasks: `Invoke-Build` (Build, Lint, Test) and `Invoke-Build Docs`. Provider unit tests need `terraform` on `PATH`.
+`make` isn't installed on Jerry's Windows machine. The `GNUmakefile` targets wrap these same commands (see README "Make targets"), and so do the `.build.ps1` tasks: `Invoke-Build` (Build, Lint, Test) and `Invoke-Build Docs`. Provider unit tests and tfplugindocs need Terraform 1.14 or later (actions and list resources). Terraform is not on `PATH` on Jerry's machine: the `.build.ps1` tasks (Test, TestAcc, Docs, Gns3Range, Checklist) resolve it as `$env:TERRAFORM_EXE`, then `C:\Users\jlbal\AppData\Local\Programs\Terraform\terraform.exe` (Windows only), then `PATH`, and hand it to child processes through `TF_ACC_TERRAFORM_PATH` and the front of `PATH`. Raw `go test` or `tfplugindocs` commands need it on `PATH` (or `TF_ACC_TERRAFORM_PATH` for tests). `Invoke-Build Preflight` prints what was resolved.
 
 Acceptance tests and manual-check-list section 1 need a GNS3 server: `Invoke-Build TestAcc -AutoStart` starts one with its own config under `$env:TEMP\gns3` and stops it afterwards; `Invoke-Build Checklist -Item 1.2` runs one check-list item in a fresh pwsh. Fixtures under `pkg/gns3/testdata` are recorded from a live server; when an endpoint changes, re-record that fixture rather than editing its response by hand.
 

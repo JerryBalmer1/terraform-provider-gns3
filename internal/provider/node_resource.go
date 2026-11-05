@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/identityschema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64default"
@@ -23,6 +24,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/JerryBalmer1/terraform-provider-gns3/pkg/gns3"
@@ -35,6 +37,7 @@ var (
 	_ resource.ResourceWithConfigValidators = (*nodeResource)(nil)
 	_ resource.ResourceWithModifyPlan       = (*nodeResource)(nil)
 	_ resource.ResourceWithValidateConfig   = (*nodeResource)(nil)
+	_ resource.ResourceWithIdentity         = (*nodeResource)(nil)
 )
 
 // defaultComputeID is sent when compute_id is unset: built-in templates have
@@ -74,6 +77,12 @@ type nodeResourceModel struct {
 	Console       types.Int64          `tfsdk:"console"`
 	Status        types.String         `tfsdk:"status"`
 	Ports         types.List           `tfsdk:"ports"`
+}
+
+// nodeIdentityModel is the gns3_node resource identity.
+type nodeIdentityModel struct {
+	ProjectID types.String `tfsdk:"project_id"`
+	NodeID    types.String `tfsdk:"node_id"`
 }
 
 var portAttrTypes = map[string]attr.Type{
@@ -212,6 +221,30 @@ func (r *nodeResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 			},
 		},
 	}
+}
+
+func (r *nodeResource) IdentitySchema(_ context.Context, _ resource.IdentitySchemaRequest, resp *resource.IdentitySchemaResponse) {
+	resp.IdentitySchema = identityschema.Schema{
+		Attributes: map[string]identityschema.Attribute{
+			"project_id": identityschema.StringAttribute{
+				RequiredForImport: true,
+				Description:       "UUID of the project that holds the node.",
+			},
+			"node_id": identityschema.StringAttribute{
+				RequiredForImport: true,
+				Description:       "Node UUID.",
+			},
+		},
+	}
+}
+
+// setNodeIdentity writes the identity of the node projectID/nodeID. id is nil
+// when Terraform does not send identity.
+func setNodeIdentity(ctx context.Context, id *tfsdk.ResourceIdentity, projectID, nodeID types.String, diags *diag.Diagnostics) {
+	if id == nil {
+		return
+	}
+	diags.Append(id.Set(ctx, nodeIdentityModel{ProjectID: projectID, NodeID: nodeID})...)
 }
 
 func (r *nodeResource) ConfigValidators(_ context.Context) []resource.ConfigValidator {
@@ -605,6 +638,7 @@ func (r *nodeResource) Create(ctx context.Context, req resource.CreateRequest, r
 	// From here on the node exists; record it before any further call can fail.
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("project_id"), projectID)...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("node_id"), nodeID)...)
+	setNodeIdentity(ctx, resp.Identity, types.StringValue(projectID), types.StringValue(nodeID), &resp.Diagnostics)
 
 	if err := writeNodeFiles(ctx, r.client, projectID, nodeID, files); err != nil {
 		resp.Diagnostics.AddError("Error writing GNS3 node file after create", err.Error())
@@ -641,6 +675,7 @@ func (r *nodeResource) Create(ctx context.Context, req resource.CreateRequest, r
 	}
 	plan.fromAPI(n, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	setNodeIdentity(ctx, resp.Identity, plan.ProjectID, plan.NodeID, &resp.Diagnostics)
 }
 
 func needsTemplateFollowUp(plan nodeResourceModel, n *gns3.Node) bool {
@@ -674,13 +709,21 @@ func (r *nodeResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		resp.Diagnostics.AddError("Error reading GNS3 node", err.Error())
 		return
 	}
-	state.fromAPI(n, &resp.Diagnostics)
-	state.Properties = readProperties(state.Properties, serverProperties(ctx, r.client, n, state.Properties, &resp.Diagnostics), &resp.Diagnostics)
-	state.StartupConfig = readStartupConfig(ctx, r.client, n, state.StartupConfig, &resp.Diagnostics)
-	if state.StartOnCreate.IsNull() || state.StartOnCreate.IsUnknown() {
-		state.StartOnCreate = types.BoolValue(false) // after import
-	}
+	state.fill(ctx, r.client, n, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+	setNodeIdentity(ctx, resp.Identity, state.ProjectID, state.NodeID, &resp.Diagnostics)
+}
+
+// fill is what Read writes into state from n: the server's values, with
+// properties and startup_config read back only where m already manages them
+// (neither for a new model, such as an import or a list result).
+func (m *nodeResourceModel) fill(ctx context.Context, c gns3.Client, n *gns3.Node, diags *diag.Diagnostics) {
+	m.fromAPI(n, diags)
+	m.Properties = readProperties(m.Properties, serverProperties(ctx, c, n, m.Properties, diags), diags)
+	m.StartupConfig = readStartupConfig(ctx, c, n, m.StartupConfig, diags)
+	if m.StartOnCreate.IsNull() || m.StartOnCreate.IsUnknown() {
+		m.StartOnCreate = types.BoolValue(false) // after import
+	}
 }
 
 func (r *nodeResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
@@ -727,6 +770,7 @@ func (r *nodeResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	}
 	plan.fromAPI(n, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	setNodeIdentity(ctx, resp.Identity, plan.ProjectID, plan.NodeID, &resp.Diagnostics)
 }
 
 func (r *nodeResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -741,13 +785,25 @@ func (r *nodeResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 	}
 }
 
+// ImportState takes "<project_id>/<node_id>" (terraform import, or an import
+// block's id) or an import block's identity.
 func (r *nodeResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	projectID, nodeID, ok := splitImportID(req.ID, "<project_id>/<node_id>", &resp.Diagnostics)
-	if !ok {
+	var id nodeIdentityModel
+	if req.ID == "" && req.Identity != nil {
+		resp.Diagnostics.Append(req.Identity.Get(ctx, &id)...)
+	} else {
+		projectID, nodeID, ok := splitImportID(req.ID, "<project_id>/<node_id>", &resp.Diagnostics)
+		if !ok {
+			return
+		}
+		id = nodeIdentityModel{ProjectID: types.StringValue(projectID), NodeID: types.StringValue(nodeID)}
+	}
+	if resp.Diagnostics.HasError() {
 		return
 	}
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("project_id"), projectID)...)
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("node_id"), nodeID)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("project_id"), id.ProjectID)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("node_id"), id.NodeID)...)
+	setNodeIdentity(ctx, resp.Identity, id.ProjectID, id.NodeID, &resp.Diagnostics)
 }
 
 func joinTicks(vals []string) string { return strings.Join(vals, "`, `") }

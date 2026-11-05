@@ -4,6 +4,39 @@ Maintained by hand. GoReleaser does not generate release notes (`changelog.disab
 
 ## Unreleased
 
+Actions, list resources, resource identity and provider functions. Existing configurations keep working on older Terraform; only the new kinds need a newer one (actions and list resources: Terraform 1.14+; identity: 1.12+; functions: 1.8+).
+
+New actions (Terraform 1.14+, run from `lifecycle { action_trigger { ... } }` or `terraform apply -invoke=action.<type>.<name>`):
+
+- `gns3_start_nodes`, `gns3_stop_nodes`, `gns3_suspend_nodes`, `gns3_reload_nodes`: `project_id` (required) and `node_ids` (optional set). With no `node_ids` the action makes one project-wide call (`POST /v2/projects/{id}/nodes/{start|stop|suspend|reload}`); otherwise it calls each node in sorted order.
+- `gns3_snapshot`: `project_id`, `name` and `restore` (default `false`). `false` creates a snapshot named `name` (GNS3 refuses a duplicate name with 409); `true` restores the one snapshot with that name and fails when there is none or more than one. On GNS3 2.2.61 a restore leaves every node stopped.
+- On GNS3 2.2.61, VPCS has no suspend: `gns3_suspend_nodes` succeeds and VPCS nodes keep running. On a closed project the project-wide calls fail with 403 "The project is not opened". Details in `docs/api-drift.md` ("Node actions and snapshots (2.2.61)").
+
+New list resources (Terraform 1.14+, `terraform query`):
+
+- `gns3_project` (no arguments), `gns3_node` (`project_id` required) and `gns3_template` (optional `template_type` filter; built-in templates are left out unless `include_builtin = true`, because `gns3_template` can't manage or import them). Each result carries the resource identity and, with `include_resource = true`, the full resource.
+
+Resource identity (Terraform 1.12+):
+
+- `gns3_project` {`project_id`}, `gns3_node` {`project_id`, `node_id`}, `gns3_link` {`project_id`, `link_id`}, `gns3_template` {`template_id`} and `gns3_image` {`compute_id`, `emulator`, `filename`}. Import works with an `import` block's `identity` and still with the existing ID strings. State written by 0.2.0 gains its identity on the next refresh, and the plan stays empty (`TestAccIdentityUpgradeFrom020`).
+
+New provider functions:
+
+- `provider::gns3::console_address(host, console)` returns `host:port` (IPv6 hosts in brackets); `provider::gns3::node_name(prefix, index)` returns `prefix-01` (index zero-padded to two digits).
+
+`pkg/gns3`:
+
+- `NodesAPI` gains `ReloadNode`, `SuspendNode`, `StartAllNodes`, `StopAllNodes`, `SuspendAllNodes` and `ReloadAllNodes`. New `SnapshotsAPI` (`ListSnapshots`, `CreateSnapshot`, `RestoreSnapshot`, `DeleteSnapshot`, type `Snapshot`), embedded in `Client`. Their fixtures are recorded from GNS3 2.2.61, including the 409 on a duplicate snapshot name and the 403 on a closed project.
+- **Breaking** (`pkg/gns3` only, not the provider): code outside this module that implements `NodesAPI` or `Client` must add the new methods.
+
+Tests, docs and build:
+
+- New scenarios `actions-start-stop` (an `after_create` trigger starts two linked VPCS nodes, then `checks.ps1` runs `terraform apply -invoke` on `gns3_stop_nodes`) and `query-adopt` (`terraform query` finds the applied project). Both set `minVersion` 0.3.0.
+- New examples under `examples/actions/`, `examples/list-resources/` (`list-resource.tfquery.hcl`) and `examples/functions/`, plus `import-by-identity.tf` for each resource; tfplugindocs generates `docs/actions/`, `docs/list-resources/` and `docs/functions/`.
+- `.build.ps1`: terraform is found through `$env:TERRAFORM_EXE`, then the default Windows install path, then `PATH`, and Test, TestAcc, Docs, Checklist and Gns3Range all use it. New `Preflight` task prints the go, terraform, framework and plugin-testing versions and fails below Terraform 1.14. `Test-Docs` also exempts the generated `docs/actions/`, `docs/list-resources/`, `docs/functions/` and `docs/ephemeral-resources/` pages from the `Up:` rule.
+- CI runs the tests against Terraform 1.14.x and the latest release. The check is now named `test (terraform 1.14.x)` / `test (terraform latest)`.
+- New acceptance test `TestAccIdentityUpgradeFrom020` downloads the published 0.2.0 provider from the Registry, applies with it, then plans with this checkout and requires an empty plan.
+
 New resource `gns3_template`:
 
 - Manages a user template: `name`, `template_type`, `compute_id` (default `local`) and `properties`, a JSON object of type-specific fields (`ram`, `adapters`, `hda_disk_image`, ...) where only the keys you set are compared with the server. `template_id`, `builtin`, `category`, `symbol` and `default_name_format` are read from the server. Import by `template_id`.

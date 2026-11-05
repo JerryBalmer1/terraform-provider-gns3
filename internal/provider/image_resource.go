@@ -14,14 +14,17 @@ import (
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/resourcevalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
+	"github.com/hashicorp/terraform-plugin-framework/resource/identityschema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/int64planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
+	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/JerryBalmer1/terraform-provider-gns3/pkg/gns3"
@@ -33,6 +36,7 @@ var (
 	_ resource.ResourceWithImportState      = (*imageResource)(nil)
 	_ resource.ResourceWithConfigValidators = (*imageResource)(nil)
 	_ resource.ResourceWithModifyPlan       = (*imageResource)(nil)
+	_ resource.ResourceWithIdentity         = (*imageResource)(nil)
 )
 
 // NewImageResource is the gns3_image resource.
@@ -49,6 +53,13 @@ type imageResourceModel struct {
 	MD5Sum     types.String `tfsdk:"md5sum"`
 	Path       types.String `tfsdk:"path"`
 	Filesize   types.Int64  `tfsdk:"filesize"`
+}
+
+// imageIdentityModel is the gns3_image resource identity.
+type imageIdentityModel struct {
+	ComputeID types.String `tfsdk:"compute_id"`
+	Emulator  types.String `tfsdk:"emulator"`
+	Filename  types.String `tfsdk:"filename"`
 }
 
 func (r *imageResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -121,6 +132,34 @@ func (r *imageResource) Schema(_ context.Context, _ resource.SchemaRequest, resp
 			},
 		},
 	}
+}
+
+func (r *imageResource) IdentitySchema(_ context.Context, _ resource.IdentitySchemaRequest, resp *resource.IdentitySchemaResponse) {
+	resp.IdentitySchema = identityschema.Schema{
+		Attributes: map[string]identityschema.Attribute{
+			"compute_id": identityschema.StringAttribute{
+				RequiredForImport: true,
+				Description:       "Compute that holds the image, for example `local`.",
+			},
+			"emulator": identityschema.StringAttribute{
+				RequiredForImport: true,
+				Description:       "Emulator whose images folder holds the file: one of `" + joinTicks(imageEmulators) + "`.",
+			},
+			"filename": identityschema.StringAttribute{
+				RequiredForImport: true,
+				Description:       "File name at the top of the emulator's images folder.",
+			},
+		},
+	}
+}
+
+// setImageIdentity writes m's identity. id is nil when Terraform does not
+// send identity.
+func setImageIdentity(ctx context.Context, id *tfsdk.ResourceIdentity, m imageResourceModel, diags *diag.Diagnostics) {
+	if id == nil {
+		return
+	}
+	diags.Append(id.Set(ctx, imageIdentityModel{ComputeID: m.ComputeID, Emulator: m.Emulator, Filename: m.Filename})...)
 }
 
 func (r *imageResource) ConfigValidators(_ context.Context) []resource.ConfigValidator {
@@ -313,6 +352,7 @@ func (r *imageResource) Create(ctx context.Context, req resource.CreateRequest, 
 	}
 	plan.fromAPI(img)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	setImageIdentity(ctx, resp.Identity, plan, &resp.Diagnostics)
 }
 
 func (r *imageResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -334,6 +374,7 @@ func (r *imageResource) Read(ctx context.Context, req resource.ReadRequest, resp
 	}
 	state.fromAPI(img)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+	setImageIdentity(ctx, resp.Identity, state, &resp.Diagnostics)
 }
 
 func (r *imageResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
@@ -348,6 +389,7 @@ func (r *imageResource) Update(ctx context.Context, req resource.UpdateRequest, 
 		// Only source_url or source_path changed: recorded, nothing uploaded.
 		plan.Path, plan.MD5Sum, plan.Filesize = state.Path, state.MD5Sum, state.Filesize
 		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+		setImageIdentity(ctx, resp.Identity, plan, &resp.Diagnostics)
 		return
 	}
 	// md5sum changed (in the configuration, or on the compute since the last
@@ -376,6 +418,7 @@ func (r *imageResource) Update(ctx context.Context, req resource.UpdateRequest, 
 	}
 	plan.fromAPI(img)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
+	setImageIdentity(ctx, resp.Identity, plan, &resp.Diagnostics)
 }
 
 // Delete only forgets the image: GNS3 2.2 has no endpoint that deletes one
@@ -393,15 +436,40 @@ func (r *imageResource) Delete(ctx context.Context, req resource.DeleteRequest, 
 			state.Filename.ValueString(), state.Emulator.ValueString(), state.ComputeID.ValueString(), state.Path.ValueString()))
 }
 
+// ImportState takes "<compute_id>/<emulator>/<filename>" (terraform import,
+// or an import block's id) or an import block's identity.
 func (r *imageResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	parts := strings.SplitN(req.ID, "/", 3)
-	if len(parts) != 3 || parts[0] == "" || parts[2] == "" || !slices.Contains(imageEmulators, parts[1]) || strings.ContainsAny(parts[2], `/\`) {
-		resp.Diagnostics.AddError("Invalid import ID",
-			fmt.Sprintf("import ID %q must be <compute_id>/<emulator>/<filename>, with emulator one of %s and a file name without / or \\.",
-				req.ID, strings.Join(imageEmulators, ", ")))
-		return
+	var id imageIdentityModel
+	if req.ID == "" && req.Identity != nil {
+		resp.Diagnostics.Append(req.Identity.Get(ctx, &id)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		if !validImageID(id.ComputeID.ValueString(), id.Emulator.ValueString(), id.Filename.ValueString()) {
+			resp.Diagnostics.AddError("Invalid import identity",
+				fmt.Sprintf("identity { compute_id = %q, emulator = %q, filename = %q } needs a compute_id, emulator one of %s and a file name without / or \\.",
+					id.ComputeID.ValueString(), id.Emulator.ValueString(), id.Filename.ValueString(), strings.Join(imageEmulators, ", ")))
+			return
+		}
+	} else {
+		parts := strings.SplitN(req.ID, "/", 3)
+		if len(parts) != 3 || !validImageID(parts[0], parts[1], parts[2]) {
+			resp.Diagnostics.AddError("Invalid import ID",
+				fmt.Sprintf("import ID %q must be <compute_id>/<emulator>/<filename>, with emulator one of %s and a file name without / or \\.",
+					req.ID, strings.Join(imageEmulators, ", ")))
+			return
+		}
+		id = imageIdentityModel{ComputeID: types.StringValue(parts[0]), Emulator: types.StringValue(parts[1]), Filename: types.StringValue(parts[2])}
 	}
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("compute_id"), parts[0])...)
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("emulator"), parts[1])...)
-	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("filename"), parts[2])...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("compute_id"), id.ComputeID)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("emulator"), id.Emulator)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("filename"), id.Filename)...)
+	if resp.Identity != nil {
+		resp.Diagnostics.Append(resp.Identity.Set(ctx, id)...)
+	}
+}
+
+// validImageID reports whether the parts name an image the resource can manage.
+func validImageID(computeID, emulator, filename string) bool {
+	return computeID != "" && filename != "" && slices.Contains(imageEmulators, emulator) && !strings.ContainsAny(filename, `/\`)
 }

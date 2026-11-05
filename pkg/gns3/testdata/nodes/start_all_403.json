@@ -1,0 +1,17 @@
+{
+  "_header": "recorded from GNS3 2.2.61 on 2026-11-04",
+  "_source": "https://gns3-server.readthedocs.io/en/stable/api/v2/controller/node/projectsprojectidnodesstart.html",
+  "_notes": "Not in the docs: on a closed project every bulk node endpoint (start, stop, suspend, reload) answers 403 \"The project is not opened\" (docs/api-drift.md).",
+  "request": {
+    "method": "POST",
+    "path": "/v2/projects/1f3db850-1612-46a1-8fce-127b55f7e606/nodes/start",
+    "body": {}
+  },
+  "response": {
+    "status": 403,
+    "body": {
+      "message": "The project is not opened",
+      "status": 403
+    }
+  }
+}

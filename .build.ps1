@@ -100,6 +100,56 @@ $Gns3Bundled = @(
     'Solar-PuTTY', 'KiTTY', 'TightVNC Viewer', 'Virt-viewer', 'Intel HAXM', 'cpulimit', 'Tools'
 )
 
+# Jerry's Terraform install, used when $env:TERRAFORM_EXE is unset. Windows only: on Linux the
+# lookup goes straight to PATH.
+$TerraformWindowsDefault = 'C:\Users\jlbal\AppData\Local\Programs\Terraform\terraform.exe'
+
+# The terraform binary every task uses: $env:TERRAFORM_EXE, then (Windows only) the default install
+# above, then terraform on PATH. Resolved once per build and cached.
+function Resolve-Terraform {
+    if ($script:TerraformExe) {
+        return $script:TerraformExe
+    }
+    $candidates = @()
+    if ($env:TERRAFORM_EXE) {
+        if (-not (Test-Path -LiteralPath $env:TERRAFORM_EXE -PathType Leaf)) {
+            throw "TERRAFORM_EXE is set to '$env:TERRAFORM_EXE', which is not a file."
+        }
+        $candidates += $env:TERRAFORM_EXE
+    }
+    elseif ($IsWindows -and (Test-Path -LiteralPath $TerraformWindowsDefault -PathType Leaf)) {
+        $candidates += $TerraformWindowsDefault
+    }
+    else {
+        $cmd = Get-Command terraform -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($cmd) { $candidates += $cmd.Source }
+    }
+    if (-not $candidates) {
+        throw "terraform not found. Set TERRAFORM_EXE to its full path$(if ($IsWindows) { ", install it at $TerraformWindowsDefault" }), or put it on PATH."
+    }
+    $script:TerraformExe = (Resolve-Path -LiteralPath $candidates[0]).Path
+    $script:TerraformExe
+}
+
+# Runs $Body with the resolved terraform first on PATH and in TF_ACC_TERRAFORM_PATH, so child
+# processes (go test with terraform-plugin-testing, tfplugindocs, a Checklist pwsh) use the same
+# binary as the tasks. Both variables are restored afterwards.
+function Use-Terraform {
+    param([Parameter(Mandatory)] [scriptblock] $Body)
+    $exe = Resolve-Terraform
+    $savedPath = $env:PATH
+    $savedAcc = $env:TF_ACC_TERRAFORM_PATH
+    $env:PATH = (Split-Path -Parent $exe) + [IO.Path]::PathSeparator + $env:PATH
+    $env:TF_ACC_TERRAFORM_PATH = $exe
+    try {
+        & $Body
+    }
+    finally {
+        $env:PATH = $savedPath
+        if ($null -eq $savedAcc) { Remove-Item Env:TF_ACC_TERRAFORM_PATH -ErrorAction SilentlyContinue } else { $env:TF_ACC_TERRAFORM_PATH = $savedAcc }
+    }
+}
+
 function Invoke-Native {
     param(
         [Parameter(Mandatory)]
@@ -359,7 +409,7 @@ function Get-ScenarioState {
     if (-not (Test-Path -LiteralPath (Join-Path $Dir 'terraform.tfstate'))) {
         return @()
     }
-    $left = @(terraform "-chdir=$Dir" state list 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ })
+    $left = @(& (Resolve-Terraform) "-chdir=$Dir" state list 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ })
     if ($LASTEXITCODE -ne 0) { throw "terraform state list failed with exit code ${LASTEXITCODE}: $($left -join '; ')" }
     $left
 }
@@ -482,7 +532,7 @@ function Invoke-Scenario {
             }
         }
         $step = 'init'
-        Invoke-Native terraform "-chdir=$Dir", init, -input=false, -upgrade, -no-color | Out-Host
+        Invoke-Native (Resolve-Terraform) "-chdir=$Dir", init, -input=false, -upgrade, -no-color | Out-Host
         # Resources left in state by an earlier run that never destroyed are not this run's to
         # delete: fail without apply and without destroy. -Destroy is the way to remove them.
         $step = 'state'
@@ -500,9 +550,9 @@ function Invoke-Scenario {
             }
         }
         $step = 'apply'
-        Invoke-Native terraform "-chdir=$Dir", apply, -auto-approve, -input=false, -no-color | Out-Host
+        Invoke-Native (Resolve-Terraform) "-chdir=$Dir", apply, -auto-approve, -input=false, -no-color | Out-Host
         $step = 'output'
-        $json = terraform "-chdir=$Dir" output -json -no-color
+        $json = & (Resolve-Terraform) "-chdir=$Dir" output -json -no-color
         if ($LASTEXITCODE -ne 0) { throw "terraform output -json failed with exit code $LASTEXITCODE" }
         $outputs = ConvertFrom-TerraformOutput -Json ($json -join "`n")
         if ($Capture) {
@@ -536,7 +586,7 @@ function Invoke-Scenario {
     finally {
         if ($initDone -and -not $Inspect) {
             try {
-                Invoke-Native terraform "-chdir=$Dir", destroy, -auto-approve, -input=false, -no-color | Out-Host
+                Invoke-Native (Resolve-Terraform) "-chdir=$Dir", destroy, -auto-approve, -input=false, -no-color | Out-Host
             }
             catch {
                 $row.Result = 'FAIL'
@@ -562,10 +612,10 @@ function Invoke-ScenarioDestroy {
         # gns3_image reads its source file on refresh, so an image scenario needs it back.
         if (@($Meta.requires) -contains 'image') { Write-Host "Wrote $(New-ScenarioDummyImage)" }
         $step = 'init'
-        Invoke-Native terraform "-chdir=$Dir", init, -input=false, -upgrade, -no-color | Out-Host
+        Invoke-Native (Resolve-Terraform) "-chdir=$Dir", init, -input=false, -upgrade, -no-color | Out-Host
         $step = 'destroy'
         $before = @(Get-ScenarioState -Dir $Dir | Where-Object { $_ -notlike 'data.*' })
-        Invoke-Native terraform "-chdir=$Dir", destroy, -auto-approve, -input=false, -no-color | Out-Host
+        Invoke-Native (Resolve-Terraform) "-chdir=$Dir", destroy, -auto-approve, -input=false, -no-color | Out-Host
         $step = 'state'
         $left = @(Get-ScenarioState -Dir $Dir)
         if ($left) {
@@ -766,9 +816,31 @@ task Install {
     Invoke-Native go install, .
 }
 
-# Client fixture tests and provider tests against the in-memory fake (terraform on PATH).
+# Client fixture tests and provider tests against the in-memory fake. terraform-plugin-testing
+# gets the binary Resolve-Terraform finds (TF_ACC_TERRAFORM_PATH, and first on PATH).
 task Test {
-    Invoke-Native go test, ./..., -count=1, -timeout, 10m
+    Use-Terraform { Invoke-Native go test, ./..., -count=1, -timeout, 10m }
+}
+
+# Prints the toolchain this checkout builds and tests with, and fails when terraform is older than
+# 1.14 (actions and list resources need it).
+task Preflight {
+    $go = go version
+    if ($LASTEXITCODE -ne 0) { throw "go version failed with exit code $LASTEXITCODE" }
+    $exe = Resolve-Terraform
+    $tfJson = & $exe version -json
+    if ($LASTEXITCODE -ne 0) { throw "$exe version -json failed with exit code $LASTEXITCODE" }
+    $tfVersion = ($tfJson | Out-String | ConvertFrom-Json).terraform_version
+    $modules = go list -m github.com/hashicorp/terraform-plugin-framework github.com/hashicorp/terraform-plugin-testing
+    if ($LASTEXITCODE -ne 0) { throw "go list -m failed with exit code $LASTEXITCODE" }
+    Write-Host "go:        $go"
+    Write-Host "terraform: $tfVersion ($exe)"
+    foreach ($line in $modules) { Write-Host "module:    $line" }
+    $core = [version](($tfVersion -split '[-+]', 2)[0])
+    if ($core -lt [version]'1.14.0') {
+        throw "terraform $tfVersion at $exe is older than 1.14.0, which actions and list resources need. Set TERRAFORM_EXE to a newer binary."
+    }
+    Write-Host 'Preflight passed.' -ForegroundColor Green
 }
 
 task Lint {
@@ -792,9 +864,12 @@ task Lint {
 }
 
 # Regenerates docs/ (never edited by hand) and validates it.
+# tfplugindocs runs the terraform it finds on PATH (Resolve-Terraform's, first) to read the schema.
 task Docs {
-    Invoke-Native go run, github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs, generate, --provider-name, gns3
-    Invoke-Native go run, github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs, validate, --provider-name, gns3
+    Use-Terraform {
+        Invoke-Native go run, github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs, generate, --provider-name, gns3
+        Invoke-Native go run, github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs, validate, --provider-name, gns3
+    }
 }
 
 # The acceptance tests against a live server. Starts one with -AutoStart when nothing answers,
@@ -816,8 +891,10 @@ task TestAcc {
     $env:GNS3_PORT = [string]$Gns3Port
     try {
         Write-Host "go test ./internal/provider/ -run TestAcc -count=1 -v -timeout 60m  (log: $log)"
-        go test ./internal/provider/ -run TestAcc -count=1 -v -timeout 60m 2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath $log | Write-Host
-        $code = $LASTEXITCODE
+        $code = Use-Terraform {
+            go test ./internal/provider/ -run TestAcc -count=1 -v -timeout 60m 2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath $log | Write-Host
+            $LASTEXITCODE
+        }
     }
     finally {
         Remove-Item Env:TF_ACC -ErrorAction SilentlyContinue
@@ -978,14 +1055,15 @@ task Gns3Range {
 # generic: copy to any Invoke-Build repo
 # Walks every .md in the repo (not .git, .terraform or node_modules) and fails on any relative
 # link or image path that does not resolve, and on any .md under docs/, test/scenarios/ or lab-template/ without
-# an "Up:" line. The pages tfplugindocs generates for the Registry (docs/index.md, docs/resources/,
-# docs/data-sources/) need no Up: line; their links are still checked. Fenced code blocks and
-# inline code are skipped. A leading / resolves from the repo root, as on GitHub.
+# an "Up:" line. The pages tfplugindocs generates for the Registry (docs/index.md and
+# docs/{resources,data-sources,actions,ephemeral-resources,functions,list-resources}/) need no Up:
+# line; their links are still checked. Fenced code blocks and inline code are skipped. A leading /
+# resolves from the repo root, as on GitHub.
 task Test-Docs {
     $skip = '[\\/](\.git|\.terraform|node_modules)([\\/]|$)'
     $files = @(Get-ChildItem -Path $PSScriptRoot -Recurse -File -Filter '*.md' -Force | Where-Object { $_.FullName -notmatch $skip })
     $upRequired = '^(docs|test[\\/]scenarios|lab-template)[\\/]'
-    $upExempt = '^docs[\\/]((resources|data-sources)[\\/]|index\.md$)'
+    $upExempt = '^docs[\\/]((resources|data-sources|actions|ephemeral-resources|functions|list-resources)[\\/]|index\.md$)'
     $problems = foreach ($file in $files) {
         $rel = [IO.Path]::GetRelativePath($PSScriptRoot, $file.FullName)
         $text = Get-Content -LiteralPath $file.FullName -Raw
@@ -1057,8 +1135,12 @@ task Checklist {
     Set-Content -LiteralPath $script -Value $block.Groups['code'].Value -Encoding utf8NoBOM -ErrorAction Stop
     Write-Host "== $Item $($match.Groups['title'].Value) (fresh pwsh)" -ForegroundColor Cyan
     try {
-        $output = & pwsh -NoProfile -NonInteractive -File $script 2>&1 | ForEach-Object { "$_" }
-        $code = $LASTEXITCODE
+        # The item's block runs plain `terraform`; Use-Terraform puts the resolved one first on PATH.
+        $output, $code = Use-Terraform {
+            $lines = @(& pwsh -NoProfile -NonInteractive -File $script 2>&1 | ForEach-Object { "$_" })
+            , $lines
+            $LASTEXITCODE
+        }
     }
     finally {
         Remove-Item -LiteralPath $script -Force -ErrorAction SilentlyContinue

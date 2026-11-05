@@ -24,6 +24,7 @@ type Client interface {
 	TemplatesAPI
 	ComputesAPI
 	ImagesAPI
+	SnapshotsAPI
 	VersionAPI
 
 	// APIVersion is the REST API generation this client speaks, "v2" or "v3".

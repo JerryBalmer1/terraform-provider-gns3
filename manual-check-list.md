@@ -10,7 +10,7 @@ Append-only: never renumber items. New items go at the end of their section; a w
 
 ### 0.1 Version and exported types
 
-Builds the provider, prints its version, and lists the resource and data source types it exports.
+Builds the provider, prints its version, and lists the resource, data source, action, list resource and function types it exports. Actions and list resources need Terraform 1.14 or later; the block uses `TERRAFORM_EXE` when set, else `terraform` on PATH.
 
 ```powershell
 Set-Location 'C:\__Code\terraform-provider-gns3'
@@ -28,14 +28,18 @@ provider_installation {
 & (Join-Path $bin 'terraform-provider-gns3.exe') -version
 $d = Join-Path $env:TEMP 'gns3-check-0.1'; New-Item -ItemType Directory -Force $d | Out-Null
 Copy-Item .\examples\provider\provider.tf $d
+$tf = if ($env:TERRAFORM_EXE) { $env:TERRAFORM_EXE } else { 'terraform' }
 Push-Location $d
-$s = (terraform providers schema -json | ConvertFrom-Json).provider_schemas.'registry.terraform.io/jerrybalmer1/gns3'
-'resources:    ' + (($s.resource_schemas.PSObject.Properties.Name | Sort-Object) -join ', ')
-'data sources: ' + (($s.data_source_schemas.PSObject.Properties.Name | Sort-Object) -join ', ')
+$s = (& $tf providers schema -json | ConvertFrom-Json).provider_schemas.'registry.terraform.io/jerrybalmer1/gns3'
+'resources:      ' + (($s.resource_schemas.PSObject.Properties.Name | Sort-Object) -join ', ')
+'data sources:   ' + (($s.data_source_schemas.PSObject.Properties.Name | Sort-Object) -join ', ')
+'actions:        ' + (($s.action_schemas.PSObject.Properties.Name | Sort-Object) -join ', ')
+'list resources: ' + (($s.list_resource_schemas.PSObject.Properties.Name | Sort-Object) -join ', ')
+'functions:      ' + (($s.functions.PSObject.Properties.Name | Sort-Object) -join ', ')
 Pop-Location; Remove-Item -Recurse -Force $d
 ```
 
-Expect: `0.2.0`, then `resources:    gns3_image, gns3_link, gns3_node, gns3_project, gns3_template` and `data sources: gns3_compute, gns3_image, gns3_project, gns3_template, gns3_version` (seen 2026-10-16; `gns3_template` added to the resources on 2026-10-16; `gns3_image` added in both lists and version bumped to 0.2.0 on 2026-10-15).
+Expect: `0.3.0` (`0.2.0` until release-prep bumps `main.go`), then `resources:      gns3_image, gns3_link, gns3_node, gns3_project, gns3_template`, `data sources:   gns3_compute, gns3_image, gns3_project, gns3_template, gns3_version`, `actions:        gns3_reload_nodes, gns3_snapshot, gns3_start_nodes, gns3_stop_nodes, gns3_suspend_nodes`, `list resources: gns3_node, gns3_project, gns3_template` and `functions:      console_address, node_name` (not yet seen: needs a GNS3 server). Actions, list resources and functions added for 0.3.0 on 2026-11-04. Earlier: resources and data sources seen 2026-10-16 (`gns3_template` added to the resources on 2026-10-16; `gns3_image` added in both lists and version bumped to 0.2.0 on 2026-10-15).
 
 Tests: none (the schema listing is not asserted in Go; `TestExamples` loads every resource type)
 

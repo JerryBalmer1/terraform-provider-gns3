@@ -2,7 +2,7 @@
 
 Up: [Scenario tests](../README.md)
 
-See also: [image-upload](../image-upload/README.md), [project-only](../project-only/README.md), [two-nodes-one-link](../two-nodes-one-link/README.md), [vpcs-startup-config](../vpcs-startup-config/README.md)
+See also: [image-upload](../image-upload/README.md), [project-only](../project-only/README.md), [two-nodes-one-link](../two-nodes-one-link/README.md), [vpcs-startup-config](../vpcs-startup-config/README.md), [actions-start-stop](../actions-start-stop/README.md), [query-adopt](../query-adopt/README.md)
 
 Builds a user VPCS template `tf-scenario-template-roundtrip` with `gns3_template` (no `properties`, so the server's defaults apply), a project of the same name, and one node `PC1` at (0, 0) whose `template_id` is `gns3_template.pc.template_id`. Nothing is linked and the node is not started.
 
